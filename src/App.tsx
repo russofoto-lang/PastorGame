@@ -1,0 +1,2339 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { io, Socket } from 'socket.io-client';
+import { 
+  Brain, 
+  History, 
+  Timer, 
+  Swords, 
+  ChevronLeft, 
+  Play, 
+  RotateCcw, 
+  CheckCircle2, 
+  XCircle,
+  Trophy,
+  AlertCircle,
+  Zap,
+  Settings,
+  Lock,
+  User,
+  Eye,
+  Send
+} from 'lucide-react';
+import { geminiService, Question, TimelineEvent } from './services/gemini';
+
+type GameMode = 'home' | 'genio' | 'memoria' | 'timeline' | 'ring' | 'chie';
+
+interface Team {
+  id: number;
+  name: string;
+  score: number;
+  color: string;
+}
+
+// Socket instance
+let socket: Socket;
+
+export default function App() {
+  const [mode, setMode] = useState<GameMode>('home');
+  const [role, setRole] = useState<'regia' | 'pubblico' | 'display'>('pubblico');
+  const [teams, setTeams] = useState<Team[]>([
+    { id: 1, name: 'Team A', score: 0, color: 'bg-retro-pink' },
+    { id: 2, name: 'Team B', score: 0, color: 'bg-retro-cyan' },
+    { id: 3, name: 'Team C', score: 0, color: 'bg-retro-yellow' },
+  ]);
+
+  const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
+  const [showTeamModal, setShowTeamModal] = useState(false);
+
+  const [isRegiaAuthenticated, setIsRegiaAuthenticated] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState(false);
+
+  const handleRoleClick = (newRole: 'regia' | 'pubblico' | 'display') => {
+    if (newRole === 'regia' && !isRegiaAuthenticated) {
+      setShowPasswordModal(true);
+    } else if (newRole === 'pubblico') {
+      setShowTeamModal(true);
+    } else {
+      setRole(newRole);
+    }
+  };
+
+  const verifyPassword = () => {
+    if (passwordInput === '0000') {
+      setIsRegiaAuthenticated(true);
+      setRole('regia');
+      setShowPasswordModal(false);
+      setPasswordInput('');
+      setPasswordError(false);
+    } else {
+      setPasswordError(true);
+      setTimeout(() => setPasswordError(false), 2000);
+    }
+  };
+
+  // Shared game data for sync
+  const [sharedState, setSharedState] = useState<any>({
+    currentIndex: 0,
+    showAnswer: false,
+    selectedOption: null,
+    topic: '',
+    questions: [],
+    revealedItems: [],
+    // ... other game specific sync data
+  });
+
+  useEffect(() => {
+    socket = io();
+
+    socket.on('stateUpdate', (state: any) => {
+      if (state.mode) setMode(state.mode);
+      if (state.teams) setTeams(state.teams);
+      if (state.gameData) setSharedState(state.gameData);
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
+
+  const emitUpdate = useCallback((updates: any) => {
+    if (role !== 'regia' && role !== 'pubblico') return;
+    socket.emit('updateState', updates);
+  }, [role]);
+
+  const emitOptionSelected = useCallback((option: string) => {
+    if (role !== 'pubblico' || selectedTeamId === null) return;
+    socket.emit('updateState', {
+      gameData: {
+        ...sharedState,
+        teamAnswers: {
+          ...(sharedState.teamAnswers || {}),
+          [selectedTeamId]: option
+        }
+      }
+    });
+  }, [role, selectedTeamId, sharedState]);
+
+  const updateScore = (teamId: number, delta: number) => {
+    const newTeams = teams.map(t => t.id === teamId ? { ...t, score: t.score + delta } : t);
+    setTeams(newTeams);
+    emitUpdate({ teams: newTeams });
+  };
+
+  const changeMode = (newMode: GameMode) => {
+    if (role !== 'regia') return;
+    setMode(newMode);
+    emitUpdate({ mode: newMode, gameData: { ...sharedState, questions: [], topic: '', currentIndex: 0, showAnswer: false, selectedOption: null } });
+  };
+
+  return (
+    <div className="min-h-screen text-white font-sans selection:bg-retro-pink/50 relative overflow-x-hidden">
+      <div className="scanline" />
+      <div className="grid-bg" />
+      
+      {/* Global Header / Role Switcher - Only on Home */}
+      {mode === 'home' && (
+        <div className="fixed top-0 left-0 w-full z-[100] p-4 flex justify-end pointer-events-none">
+          <div className="pointer-events-auto flex gap-2">
+            {(['regia', 'pubblico', 'display'] as const).map((r) => (
+              <button 
+                key={r}
+                onClick={() => handleRoleClick(r)}
+                className={`px-3 py-1.5 border font-pixel text-[8px] tracking-widest transition-all ${
+                  role === r 
+                    ? 'bg-retro-yellow text-black border-transparent shadow-[0_0_15px_rgba(255,255,0,0.3)]' 
+                    : 'bg-black/60 backdrop-blur-md text-retro-yellow border-retro-yellow/30 hover:bg-retro-yellow/10'
+                }`}
+              >
+                {r.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Global Scoreboard - REMOVED from bottom to avoid overlap */}
+      
+      <AnimatePresence mode="wait">
+        {mode === 'home' && (
+          <motion.div
+            key="home"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.1 }}
+            className="max-w-4xl mx-auto px-6 py-12 relative z-20"
+          >
+            <header className="mb-16 text-center">
+              <motion.h1 
+                className="text-6xl md:text-9xl font-retro mb-4 retro-title tracking-tighter"
+                initial={{ y: -50 }}
+                animate={{ y: 0 }}
+              >
+                Infotainment <span className="text-retro-yellow">Night</span>
+              </motion.h1>
+              <div className="flex flex-col items-center gap-4">
+                <p className="text-retro-cyan font-pixel text-lg max-w-xl mx-auto uppercase tracking-[0.3em] bg-black/40 py-4 px-8 inline-block border border-retro-cyan/30 backdrop-blur-md">
+                  The Ultimate Retro Quiz Experience
+                </p>
+              </div>
+            </header>
+
+            {role === 'regia' ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <GameCard 
+                  title="Sfida al Genio"
+                  description="Metti in difficoltà l'esperto del gruppo con domande impossibili."
+                  icon={<Brain className="w-8 h-8" />}
+                  onClick={() => changeMode('genio')}
+                  color="bg-retro-purple"
+                />
+                <GameCard 
+                  title="Il Duello"
+                  description="Un concorrente alla volta. Indovina la parola nascosta prima che il tempo scada!"
+                  icon={<Swords className="w-8 h-8" />}
+                  onClick={() => changeMode('memoria')}
+                  color="bg-retro-pink"
+                />
+                <GameCard 
+                  title="Timeline"
+                  description="Riordina 5 eventi storici dal più antico al più recente."
+                  icon={<Timer className="w-8 h-8" />}
+                  onClick={() => changeMode('timeline')}
+                  color="bg-retro-cyan"
+                />
+                <GameCard 
+                  title="Chi È?"
+                  description="Indovina il personaggio famoso dalla foto sfocata che si rivela gradualmente."
+                  icon={<User className="w-8 h-8" />}
+                  onClick={() => changeMode('chie')}
+                  color="bg-green-500"
+                />
+                <GameCard 
+                  title="Il Ring"
+                  description="Scontro 1 vs 1 a ritmo serrato su temi geografici e non solo."
+                  icon={<Swords className="w-8 h-8" />}
+                  onClick={() => changeMode('ring')}
+                  color="bg-retro-yellow"
+                />
+              </div>
+            ) : (
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="retro-card p-16 text-center bg-black/40 backdrop-blur-xl border-retro-cyan/20 relative overflow-hidden group"
+              >
+                <div className="absolute inset-0 bg-gradient-to-b from-retro-cyan/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                
+                <div className="relative z-10">
+                  <div className="mb-12 relative">
+                    <div className="w-32 h-32 bg-retro-cyan/10 rounded-full flex items-center justify-center mx-auto border border-retro-cyan/30 shadow-[0_0_50px_rgba(0,255,255,0.1)]">
+                      <div className="w-16 h-16 bg-retro-cyan/20 rounded-full animate-ping absolute" />
+                      <div className="w-4 h-4 bg-retro-cyan rounded-full shadow-[0_0_15px_rgba(0,255,255,1)]" />
+                    </div>
+                  </div>
+                  
+                  <h2 className="text-5xl font-retro uppercase mb-6 tracking-tight text-white">
+                    {role === 'display' ? 'BENVENUTI' : 'In attesa della Regia'}
+                  </h2>
+                  
+                  <div className="flex flex-col items-center gap-6">
+                    <p className="font-pixel text-[10px] text-retro-cyan/60 tracking-[0.3em] uppercase max-w-xs leading-relaxed">
+                      {role === 'display' ? 'Sullo schermo appariranno le sfide comandate dalla regia.' : 'Lo spettacolo inizierà a breve. Mettiti comodo e preparati alla sfida.'}
+                    </p>
+                    
+                    <div className="flex gap-1">
+                      {[0, 1, 2].map(i => (
+                        <motion.div
+                          key={i}
+                          animate={{ opacity: [0.2, 1, 0.2] }}
+                          transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.2 }}
+                          className="w-2 h-2 bg-retro-cyan rounded-full"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </motion.div>
+        )}
+
+        {mode !== 'home' && (
+          <motion.div
+            key="game"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="min-h-screen flex flex-col relative z-20"
+          >
+            <nav className="px-4 py-3 border-b-4 border-retro-cyan bg-black/90 backdrop-blur-md flex items-center justify-between sticky top-0 z-50 gap-4">
+              <div className="flex items-center gap-6">
+                <button 
+                  onClick={() => changeMode('home')}
+                  className="flex items-center gap-2 text-retro-yellow hover:text-retro-cyan transition-colors uppercase font-pixel text-[10px] tracking-[0.2em]"
+                >
+                  <ChevronLeft className="w-4 h-4" /> Home
+                </button>
+
+                {/* Integrated Team Scores */}
+                <div className="flex gap-3">
+                  {teams.map(team => (
+                    <div key={team.id} className="flex items-center gap-2 px-3 py-1 bg-black/40 border border-retro-cyan/20 rounded-full">
+                      <span className={`text-[8px] font-pixel uppercase ${team.color.replace('bg-', 'text-')}`}>{team.name[team.name.length-1]}</span>
+                      <span className="text-lg font-retro text-white leading-none">{team.score}</span>
+                      {role === 'regia' && (
+                        <div className="flex gap-1 ml-1">
+                          <button onClick={() => updateScore(team.id, -1)} className="w-4 h-4 bg-retro-pink text-black text-[10px] font-bold flex items-center justify-center rounded-sm hover:scale-110 transition-transform">-</button>
+                          <button onClick={() => updateScore(team.id, 1)} className="w-4 h-4 bg-green-500 text-black text-[10px] font-bold flex items-center justify-center rounded-sm hover:scale-110 transition-transform">+</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="hidden xl:block text-[10px] font-pixel text-retro-pink uppercase tracking-widest animate-pulse mr-4">
+                  LIVE SESSION
+                </div>
+                
+                {/* Role Switcher integrated in Nav */}
+                <div className="flex gap-1 bg-black/40 p-1 border border-white/10 rounded-sm">
+                  {(['regia', 'pubblico', 'display'] as const).map((r) => (
+                    <button 
+                      key={r}
+                      onClick={() => handleRoleClick(r)}
+                      className={`px-2 py-1 font-pixel text-[7px] tracking-tighter transition-all ${
+                        role === r 
+                          ? 'bg-retro-yellow text-black' 
+                          : 'text-retro-yellow/50 hover:text-retro-yellow'
+                      }`}
+                    >
+                      {r.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+                {/* Indicatore squadra attiva */}
+                {role === 'pubblico' && selectedTeamId !== null && (() => {
+                  const myTeam = teams.find(t => t.id === selectedTeamId);
+                  return myTeam ? (
+                    <div className={`px-2 py-1 font-pixel text-[8px] uppercase tracking-widest border ${
+                      myTeam.color === 'bg-retro-pink' ? 'border-retro-pink text-retro-pink' :
+                      myTeam.color === 'bg-retro-cyan' ? 'border-retro-cyan text-retro-cyan' :
+                      'border-retro-yellow text-retro-yellow'
+                    }`}>
+                      {myTeam.name}
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+            </nav>
+
+            <main className={`flex-1 flex flex-col items-center justify-center p-6 ${role === 'display' ? 'aspect-video w-full max-w-[177.78vh] max-h-screen mx-auto overflow-hidden relative' : ''}`}>
+              {mode === 'genio' && <SfidaGenio role={role} sharedState={sharedState} emitUpdate={emitUpdate} emitOptionSelected={emitOptionSelected} selectedTeamId={selectedTeamId} teams={teams} />}
+              {mode === 'memoria' && <MemoriaStorica role={role} sharedState={sharedState} emitUpdate={emitUpdate} teams={teams} />}
+              {mode === 'timeline' && <TimelineGame role={role} sharedState={sharedState} emitUpdate={emitUpdate} />}
+              {mode === 'ring' && <IlRing role={role} sharedState={sharedState} emitUpdate={emitUpdate} />}
+              {mode === 'chie' && <ChiE role={role} sharedState={sharedState} emitUpdate={emitUpdate} selectedTeamId={selectedTeamId} teams={teams} />}
+            </main>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Team Selection Modal */}
+      <AnimatePresence>
+        {showTeamModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="max-w-sm w-full bg-[#000044] border-4 border-retro-pink p-8 shadow-[0_0_50px_rgba(255,0,255,0.3)]"
+            >
+              <div className="text-center mb-8">
+                <Trophy className="w-12 h-12 text-retro-yellow mx-auto mb-4" />
+                <h3 className="text-2xl font-retro uppercase retro-title">Sei la tua squadra?</h3>
+                <p className="text-[10px] font-pixel text-retro-cyan/60 mt-2 uppercase">Seleziona la tua squadra per partecipare</p>
+              </div>
+              <div className="flex flex-col gap-3">
+                {teams.map(team => (
+                  <button
+                    key={team.id}
+                    onClick={() => {
+                      setSelectedTeamId(team.id);
+                      setRole('pubblico');
+                      setShowTeamModal(false);
+                    }}
+                    className={`w-full py-4 border-2 font-retro text-xl uppercase tracking-wide transition-all hover:scale-105 ${
+                      team.color === 'bg-retro-pink' ? 'border-retro-pink text-retro-pink hover:bg-retro-pink hover:text-black' :
+                      team.color === 'bg-retro-cyan' ? 'border-retro-cyan text-retro-cyan hover:bg-retro-cyan hover:text-black' :
+                      'border-retro-yellow text-retro-yellow hover:bg-retro-yellow hover:text-black'
+                    }`}
+                  >
+                    {team.name}
+                  </button>
+                ))}
+                <button
+                  onClick={() => setShowTeamModal(false)}
+                  className="mt-2 text-center text-white/40 font-pixel text-[9px] uppercase hover:text-white transition-colors"
+                >
+                  Annulla
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Password Modal */}
+      <AnimatePresence>
+        {showPasswordModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="max-w-sm w-full bg-[#000044] border-4 border-retro-cyan p-8 shadow-[0_0_50px_rgba(0,255,255,0.3)]"
+            >
+              <div className="text-center mb-8">
+                <Lock className="w-12 h-12 text-retro-yellow mx-auto mb-4" />
+                <h3 className="text-2xl font-retro uppercase retro-title">Accesso Riservato</h3>
+                <p className="text-[10px] font-pixel text-retro-cyan/60 mt-2 uppercase">Inserisci il codice di sicurezza</p>
+              </div>
+
+              <div className="space-y-6">
+                <input 
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => setPasswordInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && verifyPassword()}
+                  placeholder="****"
+                  autoFocus
+                  className={`w-full bg-black/50 border-2 p-4 text-center text-3xl font-retro tracking-[0.5em] focus:outline-none transition-colors ${
+                    passwordError ? 'border-retro-pink text-retro-pink' : 'border-retro-cyan text-white'
+                  }`}
+                />
+                
+                {passwordError && (
+                  <p className="text-center text-retro-pink font-pixel text-[8px] uppercase animate-bounce">
+                    Codice Errato! Riprova.
+                  </p>
+                )}
+
+                <div className="flex gap-4">
+                  <button 
+                    onClick={() => {
+                      setShowPasswordModal(false);
+                      setPasswordInput('');
+                      setPasswordError(false);
+                    }}
+                    className="flex-1 py-3 border-2 border-white/20 font-pixel text-[10px] uppercase hover:bg-white/10 transition-colors"
+                  >
+                    Annulla
+                  </button>
+                  <button 
+                    onClick={verifyPassword}
+                    className="flex-1 py-3 bg-retro-cyan text-black font-pixel text-[10px] uppercase font-bold hover:bg-white transition-colors"
+                  >
+                    Conferma
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function GameCard({ title, description, icon, onClick, color }: any) {
+  return (
+    <motion.button
+      whileHover={{ scale: 1.05, rotate: -1 }}
+      whileTap={{ scale: 0.95 }}
+      onClick={onClick}
+      className={`retro-card p-6 text-left transition-all group relative overflow-hidden`}
+    >
+      <div className={`absolute top-0 right-0 w-24 h-24 ${color} opacity-20 blur-3xl group-hover:opacity-40 transition-opacity`} />
+      <div className="relative z-10">
+        <div className={`w-12 h-12 ${color} rounded-lg flex items-center justify-center mb-4 border border-white/10 shadow-[0_0_20px_rgba(255,255,255,0.1)] text-white`}>
+          {React.cloneElement(icon as React.ReactElement, { className: 'w-6 h-6' })}
+        </div>
+        <h3 className="text-xl font-retro uppercase mb-1 tracking-tighter">{title}</h3>
+        <p className="text-retro-cyan/80 font-pixel text-[8px] leading-tight uppercase tracking-widest">{description}</p>
+      </div>
+    </motion.button>
+  );
+}
+
+// --- GAME 1: SFIDA AL GENIO ---
+function SfidaGenio({ role, sharedState, emitUpdate, emitOptionSelected, selectedTeamId, teams }: { 
+  role: 'regia' | 'pubblico' | 'display', 
+  sharedState: any, 
+  emitUpdate: (u: any) => void,
+  emitOptionSelected: (option: string) => void,
+  selectedTeamId: number | null,
+  teams: Team[]
+}) {
+  const [localTopic, setLocalTopic] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const { topic, questions, currentIndex, showAnswer, teamAnswers = {}, score } = sharedState;
+
+  // Risposta della propria squadra (per i giocatori)
+  const myAnswer = selectedTeamId !== null ? teamAnswers[selectedTeamId] : null;
+  // Per la regia: la prima risposta disponibile (compatibilità)
+  const selectedOption = Object.values(teamAnswers)[0] as string | undefined;
+
+  const startChallenge = async () => {
+    if (!localTopic || role !== 'regia') return;
+    setLoading(true);
+    try {
+      const q = await geminiService.generateGenioQuestions(localTopic);
+      emitUpdate({ 
+        gameData: { 
+          ...sharedState, 
+          questions: q, 
+          topic: localTopic, 
+          currentIndex: 0, 
+          score: 0, 
+          showAnswer: false, 
+          teamAnswers: {}
+        } 
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleOptionClick = (option: string) => {
+    if (showAnswer) return;
+    if (role === 'pubblico') {
+      emitOptionSelected(option);
+    } else if (role === 'regia') {
+      // Regia può selezionare per tutti (modalità demo/test)
+      emitUpdate({ 
+        gameData: { 
+          ...sharedState, 
+          teamAnswers: { ...teamAnswers, 0: option }
+        } 
+      });
+    }
+  };
+
+  const revealAnswer = () => {
+    if (role !== 'regia') return;
+    const correctAnswer = questions[currentIndex].answer;
+    const anyCorrect = Object.values(teamAnswers).includes(correctAnswer);
+    emitUpdate({ 
+      gameData: { 
+        ...sharedState, 
+        showAnswer: true,
+        score: anyCorrect ? score + 1 : score
+      } 
+    });
+  };
+
+  const nextQuestion = () => {
+    if (role !== 'regia') return;
+    emitUpdate({ 
+      gameData: { 
+        ...sharedState, 
+        currentIndex: currentIndex + 1,
+        showAnswer: false,
+        teamAnswers: {}
+      } 
+    });
+  };
+
+  if (loading) return <LoadingState text="Il Genio sta preparando le domande..." />;
+  
+  if (questions && questions.length > 0 && currentIndex < questions.length) {
+    const currentQ = questions[currentIndex];
+    const difficultyLabels = ["Facile", "Intermedia", "Sfidante", "Difficile", "Esperto"];
+
+    return (
+      <div className="max-w-2xl w-full">
+        <div className="mb-8 flex justify-between items-end">
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+              <span className="text-xs font-pixel text-retro-cyan uppercase tracking-widest">DOMANDA {currentIndex + 1}/{questions.length}</span>
+              <span className={`text-[10px] px-2 py-0.5 font-pixel uppercase tracking-tighter border-2 ${
+                currentIndex % 5 === 0 ? 'border-retro-cyan text-retro-cyan' :
+                currentIndex % 5 === 4 ? 'border-retro-pink text-retro-pink' :
+                'border-retro-yellow text-retro-yellow'
+              }`}>
+                {difficultyLabels[currentIndex % 5]}
+              </span>
+            </div>
+            <h2 className="text-4xl font-retro uppercase tracking-tight retro-title">{topic}</h2>
+          </div>
+          <div className="text-right">
+            <span className="text-xs font-pixel text-retro-pink uppercase tracking-widest">SCORE</span>
+            <div className="text-3xl font-retro text-retro-yellow">{score}</div>
+          </div>
+        </div>
+
+        <motion.div 
+          key={currentIndex}
+          initial={{ x: 50, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          className="retro-card p-12 mb-6 relative"
+        >
+          <p className="text-2xl font-mono leading-tight tracking-tight mb-6 uppercase">
+            {currentQ.question}
+          </p>
+
+          <div className="grid grid-cols-1 gap-3">
+            {currentQ.options?.map((option: string, idx: number) => {
+              const isCorrect = option === currentQ.answer;
+              // Squadre che hanno scelto questa opzione
+              const teamsWhoChose = teams.filter(t => teamAnswers[t.id] === option);
+              const iChooseThis = selectedTeamId !== null && teamAnswers[selectedTeamId] === option;
+              const anyoneChose = teamsWhoChose.length > 0;
+              
+              let style = "bg-[#000066] border-retro-cyan text-white hover:border-retro-pink hover:bg-retro-pink/10";
+              
+              if (showAnswer) {
+                if (isCorrect) style = "bg-retro-cyan text-black border-transparent shadow-[0_0_20px_rgba(0,255,255,0.4)]";
+                else if (anyoneChose) style = "bg-retro-pink text-black border-transparent shadow-[0_0_20px_rgba(255,0,255,0.4)]";
+                else style = "bg-zinc-900/50 border-white/5 opacity-50";
+              } else if (iChooseThis) {
+                style = "border-retro-yellow bg-retro-yellow/20";
+              } else if (anyoneChose && role !== 'pubblico') {
+                style = "border-retro-pink/60 bg-retro-pink/10";
+              }
+
+              return (
+                <button
+                  key={idx}
+                  disabled={showAnswer || role === 'display'}
+                  onClick={() => handleOptionClick(option)}
+                  className={`p-4 border-2 text-left font-mono text-lg uppercase transition-all flex items-center justify-between ${style}`}
+                >
+                  <div className="flex items-center flex-1">
+                    <span className="text-retro-yellow mr-4 font-pixel text-xs">{String.fromCharCode(65 + idx)}.</span>
+                    <span className="tracking-tight">{option}</span>
+                  </div>
+                  <div className="flex items-center gap-2 ml-2">
+                    {/* Indicatori squadre che hanno risposto */}
+                    {teamsWhoChose.map(team => (
+                      <span 
+                        key={team.id}
+                        className={`text-[9px] font-pixel px-1.5 py-0.5 rounded-sm font-bold ${
+                          showAnswer && isCorrect ? 'bg-black/20 text-black' :
+                          showAnswer ? 'bg-black/20 text-black' :
+                          team.color === 'bg-retro-pink' ? 'bg-retro-pink text-black' :
+                          team.color === 'bg-retro-cyan' ? 'bg-retro-cyan text-black' :
+                          'bg-retro-yellow text-black'
+                        }`}
+                      >
+                        {team.name}
+                      </span>
+                    ))}
+                    {showAnswer && isCorrect && <CheckCircle2 className="w-5 h-5" />}
+                    {showAnswer && anyoneChose && !isCorrect && <XCircle className="w-5 h-5" />}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </motion.div>
+
+        <div className="h-16 flex items-center justify-center gap-4">
+          <AnimatePresence>
+            {role === 'regia' && !showAnswer && Object.keys(teamAnswers).length > 0 && (
+              <motion.button
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                onClick={revealAnswer}
+                className="retro-btn w-full text-lg py-4 bg-retro-yellow text-black"
+              >
+                RIVELA RISPOSTA ({Object.keys(teamAnswers).length} squadr{Object.keys(teamAnswers).length === 1 ? 'a' : 'e'} ha risposto)
+              </motion.button>
+            )}
+            {role === 'regia' && showAnswer && (
+              <motion.button 
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.2 }}
+                onClick={nextQuestion}
+                className="retro-btn w-full text-lg py-4"
+              >
+                PROSSIMA DOMANDA {">>"}
+              </motion.button>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    );
+  }
+
+  if (questions && questions.length > 0 && currentIndex >= questions.length) {
+    return (
+      <div className="text-center">
+        <Trophy className="w-24 h-24 text-retro-yellow mx-auto mb-8 animate-bounce" />
+        <h2 className="text-6xl font-retro retro-title mb-4">SFIDA COMPLETATA!</h2>
+        <p className="text-2xl font-retro text-retro-cyan mb-12">PUNTEGGIO FINALE: {score}/{questions.length}</p>
+        {role === 'regia' && (
+          <button 
+            onClick={() => emitUpdate({ gameData: { ...sharedState, questions: [], topic: '' } })}
+            className="retro-btn px-12 py-6 text-2xl"
+          >
+            NUOVA SFIDA
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-md w-full">
+      <div className="text-center mb-12">
+        <Brain className="w-20 h-20 text-retro-pink mx-auto mb-6" />
+        <h2 className="text-5xl font-retro retro-title uppercase mb-4">Sfida al Genio</h2>
+        <p className="text-retro-cyan font-mono text-lg uppercase tracking-widest leading-tight">
+          Inserisci un argomento e l'IA genererà 5 domande a difficoltà crescente.
+        </p>
+      </div>
+
+      <div className="retro-card p-8 bg-black/40 border-retro-pink">
+        <label className="block text-xs font-pixel text-retro-pink uppercase mb-4 tracking-tighter">Argomento della sfida</label>
+        <input 
+          type="text" 
+          value={localTopic}
+          onChange={(e) => setLocalTopic(e.target.value)}
+          placeholder="ES: STORIA ROMANA, ANIME ANNI 90..."
+          className="w-full bg-black border-4 border-retro-cyan p-4 font-mono uppercase text-2xl text-white focus:border-retro-pink outline-none mb-8 placeholder:opacity-30"
+          disabled={role !== 'regia'}
+        />
+        {role === 'regia' ? (
+          <button 
+            onClick={startChallenge}
+            disabled={!localTopic}
+            className="retro-btn w-full text-2xl py-6 bg-retro-pink disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            GENERA SFIDA
+          </button>
+        ) : (
+          <div className="text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
+            In attesa che la regia scelga l'argomento...
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// --- GAME 2: IL DUELLO ---
+interface DuelloTeamResult {
+  teamId: number;
+  teamName: string;
+  teamColor: string;
+  wordsFound: number;
+  timeUsed: number; // in secondi
+  completed: boolean; // ha finito tutte le 15 parole?
+}
+
+function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pubblico' | 'display'; sharedState: any; emitUpdate: (update: any) => void; teams?: Team[] }) {
+  const [loading, setLoading] = useState(false);
+
+  // Stato sincronizzato
+  const words: { word: string; definition: string }[] = sharedState.duelloWords || [];
+  const currentWordIndex: number = sharedState.currentWordIndex ?? 0;
+  const revealedLetters: number[] = sharedState.revealedLetters || [];
+  const wordRevealed: boolean = sharedState.wordRevealed || false;
+  const timer: number = sharedState.timer ?? 120;
+  const isActive: boolean = sharedState.isActive || false;
+  const phase: 'setup' | 'teamSelect' | 'playing' | 'roundEnd' | 'finalResults' = sharedState.phase || 'setup';
+  const activeTeamId: number | null = sharedState.activeTeamId ?? null;
+  const teamResults: DuelloTeamResult[] = sharedState.teamResults || [];
+  const teamsQueue: number[] = sharedState.teamsQueue || [];
+  const currentTeamQueueIndex: number = sharedState.currentTeamQueueIndex ?? 0;
+
+  // Timer countdown (solo regia lo gestisce)
+  useEffect(() => {
+    let interval: any;
+    if (isActive && timer > 0 && role === 'regia' && phase === 'playing') {
+      interval = setInterval(() => {
+        emitUpdate({ gameData: { ...sharedState, timer: timer - 1 } });
+      }, 1000);
+    } else if (timer <= 0 && isActive && role === 'regia' && phase === 'playing') {
+      // Tempo scaduto per la squadra corrente
+      const wordsFound = words.slice(0, currentWordIndex).length + (wordRevealed ? 0 : 0);
+      const result: DuelloTeamResult = {
+        teamId: activeTeamId!,
+        teamName: teams?.find(t => t.id === activeTeamId)?.name || 'Squadra',
+        teamColor: teams?.find(t => t.id === activeTeamId)?.color || 'bg-retro-pink',
+        wordsFound: currentWordIndex, // numero di parole indovinate finora
+        timeUsed: 120,
+        completed: false
+      };
+      const newResults = [...teamResults, result];
+      const nextQueueIdx = currentTeamQueueIndex + 1;
+      const nextPhase = nextQueueIdx < teamsQueue.length ? 'teamSelect' : 'finalResults';
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          isActive: false,
+          phase: nextPhase,
+          teamResults: newResults,
+          currentTeamQueueIndex: nextQueueIdx,
+        }
+      });
+    }
+    return () => clearInterval(interval);
+  }, [isActive, timer, role, phase]);
+
+  const generateWords = async () => {
+    if (role !== 'regia') return;
+    setLoading(true);
+    try {
+      const data = await geminiService.generateDuelloWords();
+      const allTeamIds = teams?.map(t => t.id) || [];
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          duelloWords: data,
+          currentWordIndex: 0,
+          revealedLetters: getInitialLetters(data[0]?.word || ''),
+          wordRevealed: false,
+          timer: 120,
+          isActive: false,
+          phase: 'teamSelect',
+          teamResults: [],
+          teamsQueue: allTeamIds,
+          currentTeamQueueIndex: 0,
+          activeTeamId: null,
+        }
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getInitialLetters = (word: string): number[] => {
+    const w = word.toUpperCase();
+    if (w.length <= 2) return [0];
+    // Prima e ultima lettera (ignora spazi)
+    const revealed: number[] = [];
+    // Prima lettera non-spazio
+    for (let i = 0; i < w.length; i++) {
+      if (w[i] !== ' ') { revealed.push(i); break; }
+    }
+    // Ultima lettera non-spazio  
+    for (let i = w.length - 1; i >= 0; i--) {
+      if (w[i] !== ' ' && !revealed.includes(i)) { revealed.push(i); break; }
+    }
+    return revealed;
+  };
+
+  const startTeamRound = (teamId: number) => {
+    if (role !== 'regia') return;
+    emitUpdate({
+      gameData: {
+        ...sharedState,
+        activeTeamId: teamId,
+        currentWordIndex: 0,
+        revealedLetters: getInitialLetters(words[0]?.word || ''),
+        wordRevealed: false,
+        timer: 120,
+        isActive: true,
+        phase: 'playing',
+      }
+    });
+  };
+
+  const revealNextLetter = () => {
+    if (role !== 'regia' || wordRevealed) return;
+    const word = (words[currentWordIndex]?.word || '').toUpperCase();
+    const unrevealed: number[] = [];
+    for (let i = 0; i < word.length; i++) {
+      if (word[i] !== ' ' && !revealedLetters.includes(i)) unrevealed.push(i);
+    }
+    if (unrevealed.length > 0) {
+      const pick = unrevealed[Math.floor(Math.random() * unrevealed.length)];
+      const newTimer = Math.max(0, timer - 2);
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          revealedLetters: [...revealedLetters, pick],
+          timer: newTimer,
+        }
+      });
+    }
+  };
+
+  const markFound = () => {
+    // Regia pressa: il giocatore ha detto la risposta corretta. Rivela la parola intera.
+    if (role !== 'regia') return;
+    emitUpdate({ gameData: { ...sharedState, wordRevealed: true } });
+  };
+
+  const nextWord = (found: boolean) => {
+    if (role !== 'regia') return;
+    const nextIdx = currentWordIndex + 1;
+    if (nextIdx >= words.length) {
+      // Ha finito tutte le parole!
+      const timeUsed = 120 - timer;
+      const newResult: DuelloTeamResult = {
+        teamId: activeTeamId!,
+        teamName: teams?.find(t => t.id === activeTeamId)?.name || 'Squadra',
+        teamColor: teams?.find(t => t.id === activeTeamId)?.color || 'bg-retro-pink',
+        wordsFound: found ? nextIdx : currentWordIndex,
+        timeUsed,
+        completed: true,
+      };
+      const newResults = [...teamResults, newResult];
+      const nextQueueIdx = currentTeamQueueIndex + 1;
+      const nextPhase = nextQueueIdx < teamsQueue.length ? 'teamSelect' : 'finalResults';
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          isActive: false,
+          phase: nextPhase,
+          teamResults: newResults,
+          currentTeamQueueIndex: nextQueueIdx,
+          wordsFoundThisRound: found ? nextIdx : currentWordIndex,
+        }
+      });
+    } else {
+      // Aggiorna contatore parole trovate nel round corrente e vai alla prossima
+      const wordsFoundSoFar = found ? currentWordIndex + 1 : currentWordIndex;
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          currentWordIndex: nextIdx,
+          revealedLetters: getInitialLetters(words[nextIdx]?.word || ''),
+          wordRevealed: false,
+          wordsFoundThisRound: wordsFoundSoFar,
+        }
+      });
+    }
+  };
+
+  const resetGame = () => {
+    if (role !== 'regia') return;
+    emitUpdate({ gameData: { ...sharedState, phase: 'setup', duelloWords: [], teamResults: [] } });
+  };
+
+  if (loading) return <LoadingState text="Il Duello si prepara... generazione parole in corso" />;
+
+  // ── FASE SETUP ──
+  if (phase === 'setup') {
+    return (
+      <div className="max-w-lg w-full text-center">
+        <motion.div
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="mb-10"
+        >
+          <Swords className="w-20 h-20 text-retro-pink mx-auto mb-4 drop-shadow-[0_0_20px_rgba(255,0,255,0.8)]" />
+          <h2 className="text-6xl font-retro retro-title uppercase mb-3">Il Duello</h2>
+          <p className="text-retro-cyan font-pixel text-[11px] uppercase tracking-[0.25em] leading-loose max-w-sm mx-auto">
+            Ogni squadra gioca a turno.<br />
+            La regia rivela lettere, il concorrente indovina.<br />
+            Ogni lettera svelata costa 2 secondi.
+          </p>
+        </motion.div>
+
+        {role === 'regia' ? (
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={generateWords}
+            className="retro-btn w-full text-2xl py-6 bg-retro-pink shadow-[0_0_30px_rgba(255,0,255,0.4)]"
+          >
+            <span className="flex items-center justify-center gap-3">
+              <Zap className="w-6 h-6" /> GENERA LE PAROLE
+            </span>
+          </motion.button>
+        ) : (
+          <div className="p-6 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase tracking-widest">
+            In attesa che la regia generi le parole...
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── FASE SELEZIONE SQUADRA ──
+  if (phase === 'teamSelect') {
+    const nextTeamId = teamsQueue[currentTeamQueueIndex];
+    const nextTeam = teams?.find(t => t.id === nextTeamId);
+    const alreadyPlayed = teamResults.map(r => r.teamId);
+
+    return (
+      <div className="max-w-2xl w-full">
+        <div className="text-center mb-10">
+          <span className="text-xs font-pixel text-retro-pink uppercase tracking-[0.3em] block mb-2">IL DUELLO</span>
+          <h2 className="text-5xl font-retro retro-title uppercase mb-2">È il tuo turno!</h2>
+          {nextTeam && (
+            <div className={`inline-block mt-4 px-8 py-3 border-4 text-3xl font-retro uppercase ${
+              nextTeam.color === 'bg-retro-pink' ? 'border-retro-pink text-retro-pink shadow-[0_0_30px_rgba(255,0,255,0.4)]' :
+              nextTeam.color === 'bg-retro-cyan' ? 'border-retro-cyan text-retro-cyan shadow-[0_0_30px_rgba(0,255,255,0.4)]' :
+              'border-retro-yellow text-retro-yellow shadow-[0_0_30px_rgba(255,255,0,0.4)]'
+            }`}>
+              {nextTeam.name}
+            </div>
+          )}
+          <p className="mt-4 text-white/50 font-pixel text-[10px] uppercase tracking-widest">
+            Squadre già giocate: {alreadyPlayed.length} / {teamsQueue.length}
+          </p>
+        </div>
+
+        {/* Risultati squadre precedenti */}
+        {teamResults.length > 0 && (
+          <div className="mb-8 grid grid-cols-1 md:grid-cols-3 gap-3">
+            {teamResults.map((r, i) => (
+              <div key={i} className="bg-black/40 border border-white/10 p-4 text-center">
+                <span className={`text-xs font-pixel uppercase ${
+                  r.teamColor === 'bg-retro-pink' ? 'text-retro-pink' :
+                  r.teamColor === 'bg-retro-cyan' ? 'text-retro-cyan' :
+                  'text-retro-yellow'
+                }`}>{r.teamName}</span>
+                <div className="text-3xl font-retro text-white mt-1">{r.wordsFound}<span className="text-base text-white/40">/{words.length}</span></div>
+                <div className="text-[10px] font-pixel text-white/40 uppercase">
+                  {r.completed ? `${r.timeUsed}s usati` : 'Tempo scaduto'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {role === 'regia' && (
+          <motion.button
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => nextTeamId !== undefined && startTeamRound(nextTeamId)}
+            className="retro-btn w-full text-2xl py-6 bg-retro-cyan text-black"
+          >
+            VIA! INIZIA IL ROUND →
+          </motion.button>
+        )}
+      </div>
+    );
+  }
+
+  // ── FASE GIOCO ──
+  if (phase === 'playing') {
+    const currentWord = words[currentWordIndex];
+    if (!currentWord) return null;
+    const wordUpper = currentWord.word.toUpperCase();
+    const totalNonSpace = wordUpper.replace(/\s/g, '').length;
+    const revealedNonSpace = revealedLetters.filter(i => wordUpper[i] !== ' ').length;
+    const allRevealed = revealedNonSpace >= totalNonSpace;
+    const activeTeam = teams?.find(t => t.id === activeTeamId);
+    const wordsFoundSoFar: number = sharedState.wordsFoundThisRound ?? 0;
+    const minutes = Math.floor(timer / 60);
+    const seconds = timer % 60;
+    const timerStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    const timerPct = (timer / 120) * 100;
+
+    return (
+      <div className="max-w-3xl w-full">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <span className="text-[10px] font-pixel text-retro-pink uppercase tracking-widest block">IL DUELLO</span>
+            {activeTeam && (
+              <span className={`text-xl font-retro uppercase ${
+                activeTeam.color === 'bg-retro-pink' ? 'text-retro-pink' :
+                activeTeam.color === 'bg-retro-cyan' ? 'text-retro-cyan' :
+                'text-retro-yellow'
+              }`}>{activeTeam.name}</span>
+            )}
+          </div>
+          <div className="text-center">
+            <div className={`text-5xl font-retro tabular-nums ${
+              timer <= 10 ? 'text-red-500 animate-pulse' :
+              timer <= 30 ? 'text-retro-yellow' : 'text-white'
+            }`}>{timerStr}</div>
+            <div className="w-48 h-2 bg-black/40 border border-white/10 mt-1 mx-auto overflow-hidden">
+              <motion.div
+                className={`h-full ${
+                  timer <= 10 ? 'bg-red-500' :
+                  timer <= 30 ? 'bg-retro-yellow' : 'bg-retro-cyan'
+                }`}
+                animate={{ width: `${timerPct}%` }}
+                transition={{ duration: 0.5 }}
+              />
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="text-[10px] font-pixel text-white/40 uppercase block">Parola</span>
+            <span className="text-2xl font-retro text-white">{currentWordIndex + 1}<span className="text-white/30">/{words.length}</span></span>
+            <span className="text-[10px] font-pixel text-retro-cyan uppercase block mt-1">✓ {wordsFoundSoFar} indovinate</span>
+          </div>
+        </div>
+
+        {/* Card parola */}
+        <motion.div
+          key={currentWordIndex}
+          initial={{ x: 60, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          className={`retro-card p-8 mb-6 relative ${
+            wordRevealed ? 'border-retro-cyan shadow-[0_0_40px_rgba(0,255,255,0.3)]' : ''
+          }`}
+        >
+          {/* Definizione */}
+          <div className="mb-6">
+            <span className="text-[10px] font-pixel text-white/40 uppercase tracking-widest block mb-2">Definizione</span>
+            <p className="text-xl md:text-2xl font-mono text-white leading-snug uppercase tracking-tight">
+              {currentWord.definition}
+            </p>
+          </div>
+
+          {/* Parola con lettere */}
+          <div className="border-t-2 border-white/10 pt-6">
+            <span className="text-[10px] font-pixel text-white/40 uppercase tracking-widest block mb-3">
+              {wordUpper.length} lettere
+            </span>
+            <div className="flex flex-wrap gap-2 justify-center">
+              {wordUpper.split('').map((char, idx) => {
+                if (char === ' ') return <div key={idx} className="w-4" />;
+                const isRevealed = wordRevealed || revealedLetters.includes(idx);
+                return (
+                  <motion.div
+                    key={idx}
+                    initial={false}
+                    animate={isRevealed ? {
+                      backgroundColor: wordRevealed ? 'rgba(0,255,255,0.2)' : 'rgba(255,255,0,0.15)',
+                      borderColor: wordRevealed ? 'rgba(0,255,255,0.8)' : 'rgba(255,255,0,0.6)',
+                      scale: isRevealed ? [1, 1.2, 1] : 1,
+                    } : {}}
+                    transition={{ duration: 0.3 }}
+                    className={`w-10 h-14 md:w-12 md:h-16 flex items-center justify-center border-2 text-2xl md:text-3xl font-retro transition-all ${
+                      isRevealed
+                        ? wordRevealed
+                          ? 'border-retro-cyan bg-retro-cyan/20 text-retro-cyan'
+                          : 'border-retro-yellow bg-retro-yellow/20 text-retro-yellow'
+                        : 'border-white/20 bg-white/5 text-transparent'
+                    }`}
+                  >
+                    {isRevealed ? char : '_'}
+                  </motion.div>
+                );
+              })}
+            </div>
+          </div>
+
+          {wordRevealed && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-6 text-center"
+            >
+              <CheckCircle2 className="w-10 h-10 text-retro-cyan mx-auto mb-2" />
+              <span className="text-retro-cyan font-pixel text-[11px] uppercase tracking-widest">Risposta corretta!</span>
+            </motion.div>
+          )}
+        </motion.div>
+
+        {/* Controlli Regia */}
+        {role === 'regia' && (
+          <div className="flex flex-col gap-3">
+            {!wordRevealed && (
+              <div className="flex gap-3">
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={revealNextLetter}
+                  disabled={allRevealed}
+                  className="retro-btn flex-1 py-4 text-lg bg-retro-yellow text-black disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <Eye className="w-5 h-5" /> LETTERA (-2s)
+                  </span>
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={markFound}
+                  className="retro-btn flex-1 py-4 text-lg bg-retro-cyan text-black"
+                >
+                  <span className="flex items-center justify-center gap-2">
+                    <CheckCircle2 className="w-5 h-5" /> RISPOSTA ESATTA!
+                  </span>
+                </motion.button>
+              </div>
+            )}
+            <div className="flex gap-3">
+              {wordRevealed ? (
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => nextWord(true)}
+                  className="retro-btn flex-1 py-4 text-xl bg-retro-pink"
+                >
+                  PAROLA SUCCESSIVA →
+                </motion.button>
+              ) : (
+                <motion.button
+                  whileHover={{ scale: 1.03 }}
+                  whileTap={{ scale: 0.97 }}
+                  onClick={() => nextWord(false)}
+                  className="retro-btn flex-1 py-4 text-lg bg-white/10 border border-white/20"
+                >
+                  SALTA →
+                </motion.button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {role !== 'regia' && (
+          <div className="text-center p-4 border-2 border-dashed border-white/20 text-white/40 font-pixel text-[10px] uppercase tracking-widest">
+            {role === 'display' ? 'La regia gestisce il gioco' : 'Ascolta la definizione e dì la risposta!'}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── FASE RISULTATI FINALI ──
+  if (phase === 'finalResults') {
+    // Determina il vincitore: più parole indovinate. In caso di parità, meno tempo usato.
+    const sorted = [...teamResults].sort((a, b) => {
+      if (b.wordsFound !== a.wordsFound) return b.wordsFound - a.wordsFound;
+      return a.timeUsed - b.timeUsed;
+    });
+    const winner = sorted[0];
+
+    return (
+      <div className="max-w-2xl w-full text-center">
+        <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.5 }}>
+          <Trophy className="w-24 h-24 text-retro-yellow mx-auto mb-4 drop-shadow-[0_0_30px_rgba(255,255,0,0.8)] animate-bounce" />
+          <h2 className="text-6xl font-retro retro-title uppercase mb-2">Duello Finito!</h2>
+          {winner && (
+            <p className={`text-3xl font-retro mt-4 uppercase ${
+              winner.teamColor === 'bg-retro-pink' ? 'text-retro-pink' :
+              winner.teamColor === 'bg-retro-cyan' ? 'text-retro-cyan' :
+              'text-retro-yellow'
+            }`}>
+              🏆 {winner.teamName} vince!
+            </p>
+          )}
+        </motion.div>
+
+        <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
+          {sorted.map((r, i) => (
+            <motion.div
+              key={r.teamId}
+              initial={{ y: 30, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: i * 0.15 }}
+              className={`p-6 border-2 relative ${
+                i === 0
+                  ? r.teamColor === 'bg-retro-pink' ? 'border-retro-pink shadow-[0_0_30px_rgba(255,0,255,0.3)] bg-retro-pink/10' :
+                    r.teamColor === 'bg-retro-cyan' ? 'border-retro-cyan shadow-[0_0_30px_rgba(0,255,255,0.3)] bg-retro-cyan/10' :
+                    'border-retro-yellow shadow-[0_0_30px_rgba(255,255,0,0.3)] bg-retro-yellow/10'
+                  : 'border-white/10 bg-black/20'
+              }`}
+            >
+              {i === 0 && (
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-retro-yellow text-black text-[9px] font-pixel px-3 py-1 uppercase">
+                  🥇 Vincitore
+                </div>
+              )}
+              <span className={`text-sm font-pixel uppercase ${
+                r.teamColor === 'bg-retro-pink' ? 'text-retro-pink' :
+                r.teamColor === 'bg-retro-cyan' ? 'text-retro-cyan' :
+                'text-retro-yellow'
+              }`}>{r.teamName}</span>
+              <div className="text-5xl font-retro text-white my-2">{r.wordsFound}<span className="text-xl text-white/30">/{words.length}</span></div>
+              <div className="text-[10px] font-pixel text-white/40 uppercase space-y-1">
+                <div>{r.completed ? `Completato in ${r.timeUsed}s` : `Tempo scaduto`}</div>
+                <div>{r.wordsFound} parole indovinate</div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+
+        {role === 'regia' && (
+          <div className="flex gap-4">
+            <motion.button
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={generateWords}
+              className="retro-btn flex-1 py-5 text-xl bg-retro-pink"
+            >
+              <Zap className="w-5 h-5 inline mr-2" /> NUOVE PAROLE
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={resetGame}
+              className="retro-btn px-8 py-5 text-xl bg-white/10 border border-white/20"
+            >
+              <RotateCcw className="w-5 h-5 inline mr-2" /> RESET
+            </motion.button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// --- GAME 3: TIMELINE ---
+function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' | 'display'; sharedState: any; emitUpdate: (update: any) => void }) {
+  const [categories, setCategories] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Sync from sharedState
+  const selectedCategory = sharedState.category || '';
+  const round = sharedState.round || 1;
+  const events = sharedState.events || [];
+  const shuffled = sharedState.shuffled || [];
+  const timer = sharedState.timer ?? 180;
+  const isActive = sharedState.isActive || false;
+  const gameOver = sharedState.gameOver || false;
+  const result = sharedState.result || null;
+
+  const roundConfig = [3, 5, 7, 10];
+
+  useEffect(() => {
+    let interval: any;
+    if (isActive && timer > 0 && !gameOver && role === 'regia') {
+      interval = setInterval(() => {
+        emitUpdate({
+          gameData: {
+            ...sharedState,
+            timer: timer - 1
+          }
+        });
+      }, 1000);
+    } else if (timer === 0 && role === 'regia') {
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          gameOver: true,
+          isActive: false
+        }
+      });
+    }
+    return () => clearInterval(interval);
+  }, [isActive, timer, gameOver, role, sharedState, emitUpdate]);
+
+  const fetchCategories = async () => {
+    if (role !== 'regia') return;
+    setLoading(true);
+    try {
+      const data = await geminiService.generateTimelineCategories();
+      setCategories(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startWithCategory = async (category: string) => {
+    if (role !== 'regia') return;
+    setLoading(true);
+    try {
+      const count = roundConfig[0];
+      const data = await geminiService.generateTimelineEvents(category, count);
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          category: category,
+          events: data,
+          shuffled: [...data].sort(() => Math.random() - 0.5),
+          round: 1,
+          timer: 180,
+          isActive: true,
+          gameOver: false,
+          result: null
+        }
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const nextRound = async () => {
+    if (role !== 'regia') return;
+    if (round >= 4) {
+      emitUpdate({ gameData: { ...sharedState, gameOver: true } });
+      return;
+    }
+    setLoading(true);
+    try {
+      const nextR = round + 1;
+      const count = roundConfig[nextR - 1];
+      const data = await geminiService.generateTimelineEvents(selectedCategory, count);
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          events: data,
+          shuffled: [...data].sort(() => Math.random() - 0.5),
+          round: nextR,
+          result: null
+        }
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const move = (index: number, direction: 'up' | 'down') => {
+    if (result || (role !== 'regia' && role !== 'pubblico')) return;
+    const newArr = [...shuffled];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= newArr.length) return;
+    [newArr[index], newArr[targetIndex]] = [newArr[targetIndex], newArr[index]];
+    emitUpdate({
+      gameData: {
+        ...sharedState,
+        shuffled: newArr
+      }
+    });
+  };
+
+  const check = () => {
+    if (role !== 'regia') return;
+    const sorted = [...events].sort((a: any, b: any) => a.year - b.year);
+    const isPerfect = shuffled.every((ev: any, i: number) => ev.year === sorted[i].year);
+    
+    emitUpdate({
+      gameData: {
+        ...sharedState,
+        result: { 
+          correct: isPerfect, 
+          score: isPerfect ? (round * 10) : 0 
+        },
+        isActive: false
+      }
+    });
+  };
+
+  if (loading) return <LoadingState text="Costruendo la linea del tempo..." />;
+
+  if (gameOver) {
+    return (
+      <div className="max-w-md w-full text-center">
+        <Trophy className="w-20 h-20 text-retro-yellow mx-auto mb-8" />
+        <h2 className="text-6xl font-retro retro-title uppercase mb-4">GAME OVER</h2>
+        <p className="text-2xl font-retro text-retro-cyan mb-8 uppercase">Round: {round - (result?.correct ? 0 : 1)} / 4</p>
+        <div className="bg-[#000044] p-8 border border-retro-cyan/30 shadow-[0_0_30px_rgba(0,255,255,0.1)] mb-12 backdrop-blur-md">
+          <span className="text-xs font-pixel text-retro-yellow uppercase tracking-widest block mb-2">TEMPO RIMANENTE</span>
+          <div className="text-5xl font-retro">{timer}s</div>
+        </div>
+        {role === 'regia' && (
+          <button 
+            onClick={() => {
+              emitUpdate({
+                gameData: {
+                  ...sharedState,
+                  selectedCategory: '',
+                  events: [],
+                  gameOver: false,
+                  round: 1,
+                  isActive: false,
+                  result: null
+                }
+              });
+            }}
+            className="retro-btn w-full text-2xl py-6 bg-retro-pink"
+          >
+            RIPROVA
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (selectedCategory && events.length > 0) {
+    const sorted = [...events].sort((a: any, b: any) => a.year - b.year);
+    return (
+      <div className="max-w-3xl w-full">
+        <div className="flex justify-between items-end mb-12">
+          <div className="text-left">
+            <span className="text-xs font-pixel text-retro-cyan uppercase tracking-widest block mb-1">ROUND {round}/4</span>
+            <h2 className="text-4xl font-retro uppercase tracking-tight retro-title">{selectedCategory}</h2>
+          </div>
+          <div className="flex gap-8">
+            <div className="text-right">
+              <span className="text-xs font-pixel text-retro-yellow uppercase tracking-widest block">TIMER</span>
+              <div className={`text-4xl font-retro ${timer < 20 ? 'text-red-500 animate-pulse' : 'text-white'}`}>{timer}s</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4 mb-12">
+          {shuffled.map((ev: any, i: number) => {
+            const isCorrectPosition = result && ev.year === sorted[i].year;
+            
+            return (
+              <motion.div 
+                layout
+                key={ev.event}
+                className={`p-5 border flex items-center gap-6 transition-all ${
+                  result 
+                    ? (isCorrectPosition ? 'bg-green-500 border-transparent text-black shadow-[0_0_20px_rgba(34,197,94,0.3)]' : 'bg-retro-pink border-transparent text-black shadow-[0_0_20px_rgba(255,0,255,0.3)]') 
+                    : 'bg-[#000066] border-retro-cyan/30 shadow-[0_0_15px_rgba(0,255,255,0.1)]'
+                }`}
+              >
+                {(role === 'regia' || role === 'pubblico') && (
+                  <div className="flex flex-col gap-3">
+                    <button 
+                      onClick={() => move(i, 'up')} 
+                      className={`p-3 border-2 transition-colors ${
+                        result ? 'border-black/20 text-black/40' : 'bg-black/20 border-retro-cyan text-retro-cyan hover:bg-retro-cyan hover:text-black'
+                      }`}
+                      disabled={i === 0 || !!result}
+                    >
+                      <ChevronLeft className="w-8 h-8 rotate-90" />
+                    </button>
+                    <button 
+                      onClick={() => move(i, 'down')} 
+                      className={`p-3 border-2 transition-colors ${
+                        result ? 'border-black/20 text-black/40' : 'bg-black/20 border-retro-cyan text-retro-cyan hover:bg-retro-cyan hover:text-black'
+                      }`}
+                      disabled={i === shuffled.length - 1 || !!result}
+                    >
+                      <ChevronLeft className="w-8 h-8 -rotate-90" />
+                    </button>
+                  </div>
+                )}
+                <div className="flex-1">
+                  <p className="text-xl font-mono uppercase leading-tight tracking-tight">{ev.event}</p>
+                  {result && (
+                    <span className="text-sm font-pixel text-black/70 mt-2 block">{ev.year}</span>
+                  )}
+                </div>
+                <div className={`text-4xl font-retro transition-colors ${isCorrectPosition ? 'text-black' : result ? 'text-black/40' : 'text-retro-yellow'}`}>
+                  {i + 1 < 10 ? `0${i + 1}` : i + 1}
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+
+        <div className="flex gap-4">
+          {role === 'regia' && !result && (
+            <button 
+              onClick={check}
+              className="retro-btn w-full text-xl py-4 bg-retro-cyan"
+            >
+              VERIFICA ORDINE
+            </button>
+          )}
+          {result && (
+            <div className="w-full space-y-4">
+              <div className={`text-2xl font-retro uppercase text-center retro-title ${result.correct ? 'text-green-500' : 'text-retro-pink'}`}>
+                {result.correct ? 'ROUND SUPERATO!' : 'ERRORE NELL\'ORDINE!'}
+              </div>
+              <div className="flex gap-4">
+                {role === 'regia' && result.correct ? (
+                  <button 
+                    onClick={nextRound}
+                    className="retro-btn flex-1 text-lg py-4 bg-green-500 text-black"
+                  >
+                    {round < 4 ? 'PROSSIMO ROUND' : 'VITTORIA FINALE!'}
+                  </button>
+                ) : role === 'regia' ? (
+                  <button 
+                    onClick={() => emitUpdate({ gameData: { ...sharedState, gameOver: true } })}
+                    className="retro-btn flex-1 text-lg py-4 bg-retro-pink"
+                  >
+                    FINE PARTITA
+                  </button>
+                ) : null}
+                {role === 'regia' && (
+                  <button 
+                    onClick={() => emitUpdate({ gameData: { ...sharedState, category: '', events: [] } })}
+                    className="retro-btn bg-white text-black px-6"
+                  >
+                    QUIT
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          {role === 'pubblico' && !result && (
+            <div className="flex-1 text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
+              Trascina o usa le frecce per ordinare gli eventi!
+            </div>
+          )}
+          {role === 'display' && !result && (
+            <div className="flex-1 text-center p-4 border-2 border-dashed border-retro-cyan text-retro-cyan font-pixel text-[10px] uppercase">
+              In attesa della regia...
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (categories.length > 0) {
+    return (
+      <div className="max-w-2xl w-full text-center">
+        <History className="w-20 h-20 text-retro-cyan mx-auto mb-8" />
+        <h2 className="text-5xl font-retro retro-title uppercase mb-12">SCEGLI IL TEMA</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {categories.map((cat: string, i: number) => (
+            <button
+              key={i}
+              disabled={role !== 'regia'}
+              onClick={() => startWithCategory(cat)}
+              className="p-8 bg-[#000066] border border-retro-cyan/30 hover:border-retro-pink hover:bg-retro-pink/10 transition-all text-left shadow-[0_0_20px_rgba(0,255,255,0.1)] active:scale-95 disabled:opacity-50"
+            >
+              <span className="text-xs font-pixel text-retro-yellow uppercase mb-2 block">TEMA 0{i+1}</span>
+              <span className="text-2xl font-retro uppercase leading-tight">{cat}</span>
+            </button>
+          ))}
+        </div>
+        {role !== 'regia' && (
+          <div className="mt-12 text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
+            In attesa che la regia scelga un tema...
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-md w-full text-center">
+      <History className="w-20 h-20 text-retro-cyan mx-auto mb-8" />
+      <h2 className="text-6xl font-retro retro-title uppercase mb-4">TIMELINE</h2>
+      <p className="text-retro-cyan font-mono text-lg mb-12 uppercase leading-tight tracking-widest">
+        METTI IN ORDINE GLI EVENTI STORICI. 4 ROUND, DIFFICOLTÀ CRESCENTE (3, 5, 7, 10 EVENTI). HAI 3 MINUTI!
+      </p>
+      {role === 'regia' ? (
+        <button 
+          onClick={fetchCategories}
+          className="retro-btn w-full text-2xl py-6 bg-retro-cyan flex items-center justify-center gap-4"
+        >
+          <Play className="w-6 h-6" /> INIZIA SFIDA
+        </button>
+      ) : (
+        <div className="text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
+          In attesa che la regia inizi la sfida...
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- GAME 4: IL RING ---
+function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' | 'display'; sharedState: any; emitUpdate: (update: any) => void }) {
+  const [loading, setLoading] = useState(false);
+
+  // Sync from sharedState
+  const theme = sharedState.theme || '';
+  const categories = sharedState.categories || [];
+  const timer = sharedState.timer ?? 5;
+  const isActive = sharedState.isActive || false;
+  const turn = sharedState.turn || 1;
+  const scores = sharedState.scores || { p1: 0, p2: 0 };
+  const round = sharedState.round || 1;
+  const winner = sharedState.winner || null;
+
+  useEffect(() => {
+    let interval: any;
+    if (isActive && timer > 0 && role === 'regia') {
+      interval = setInterval(() => {
+        emitUpdate({
+          gameData: {
+            ...sharedState,
+            timer: timer - 1
+          }
+        });
+      }, 1000);
+    } else if (timer === 0 && isActive && role === 'regia') {
+      const roundWinner = turn === 1 ? 2 : 1;
+      const newScores = {
+        ...scores,
+        [roundWinner === 1 ? 'p1' : 'p2']: scores[roundWinner === 1 ? 'p1' : 'p2'] + 1
+      };
+      
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          isActive: false,
+          scores: newScores,
+          winner: round < 3 ? null : (newScores.p1 > newScores.p2 ? 1 : 2)
+        }
+      });
+    }
+    return () => clearInterval(interval);
+  }, [isActive, timer, turn, scores, round, role, sharedState, emitUpdate]);
+
+  const fetchCategories = async () => {
+    if (role !== 'regia') return;
+    setLoading(true);
+    try {
+      const cats = await geminiService.generateRingCategories();
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          categories: cats,
+          theme: '',
+          winner: null,
+          scores: { p1: 0, p2: 0 },
+          round: 1,
+          isActive: false
+        }
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const startWithCategory = async (cat: string) => {
+    if (role !== 'regia') return;
+    setLoading(true);
+    try {
+      const t = await geminiService.generateRingTheme(cat);
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          theme: t,
+          timer: 5,
+          isActive: false,
+          turn: 1,
+          categories: []
+        }
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const nextTurn = () => {
+    if (role !== 'regia') return;
+    emitUpdate({
+      gameData: {
+        ...sharedState,
+        turn: turn === 1 ? 2 : 1,
+        timer: 5,
+        isActive: true
+      }
+    });
+  };
+
+  const nextRound = async () => {
+    if (role !== 'regia') return;
+    setLoading(true);
+    try {
+      const t = await geminiService.generateRingTheme();
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          theme: t,
+          timer: 5,
+          isActive: false,
+          turn: round % 2 === 0 ? 1 : 2,
+          round: round + 1
+        }
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) return <LoadingState text="Preparando il Ring..." />;
+
+  if (categories.length > 0) {
+    return (
+      <div className="max-w-2xl w-full text-center">
+        <Swords className="w-20 h-20 text-retro-cyan mx-auto mb-8" />
+        <h2 className="text-5xl font-retro retro-title uppercase mb-12">SCEGLI IL TERRENO</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {categories.map((cat: string, i: number) => (
+            <button
+              key={i}
+              disabled={role !== 'regia'}
+              onClick={() => startWithCategory(cat)}
+              className="p-8 bg-[#000066] border border-retro-cyan/30 hover:border-retro-pink hover:bg-retro-pink/10 transition-all text-left shadow-[0_0_20px_rgba(0,255,255,0.1)] active:scale-95 disabled:opacity-50"
+            >
+              <span className="text-xs font-pixel text-retro-yellow uppercase mb-2 block">SETTORE 0{i+1}</span>
+              <span className="text-2xl font-retro uppercase leading-tight">{cat}</span>
+            </button>
+          ))}
+        </div>
+        {role !== 'regia' && (
+          <div className="mt-12 text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
+            In attesa che la regia scelga il terreno...
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (theme) {
+    const isGameOver = scores.p1 === 2 || scores.p2 === 2 || (round === 3 && timer === 0);
+
+    return (
+      <div className="max-w-2xl w-full text-center">
+        <div className="flex justify-between items-center mb-12">
+          <div className="flex gap-3">
+            {[1, 2, 3].map(r => (
+              <div key={r} className={`w-4 h-4 rounded-full border-2 border-black ${round >= r ? 'bg-retro-yellow' : 'bg-white/10'}`} />
+            ))}
+          </div>
+          <span className="text-xs font-pixel text-retro-cyan uppercase tracking-widest">ROUND {round} DI 3</span>
+          <div className="text-retro-yellow font-retro text-2xl">
+            {scores.p1} - {scores.p2}
+          </div>
+        </div>
+
+        <div className="mb-16">
+          <span className="text-xs font-pixel text-retro-cyan uppercase tracking-widest block mb-3">TEMA DEL ROUND</span>
+          <h2 className="text-6xl font-retro uppercase tracking-tighter leading-none retro-title">{theme}</h2>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 md:gap-12 mb-16">
+          <div className={`flex-1 p-6 md:p-10 border transition-all ${turn === 1 ? 'border-retro-cyan bg-retro-cyan/20 scale-105 md:scale-110 shadow-[0_0_30px_rgba(0,255,255,0.2)]' : 'border-white/5 bg-black/40 opacity-50'}`}>
+            <span className="text-[10px] font-pixel uppercase tracking-widest block mb-2 text-retro-yellow">P1</span>
+            <div className="text-xl md:text-3xl font-retro uppercase">SFIDANTE A</div>
+          </div>
+          
+          <div className="flex flex-col items-center min-w-[100px]">
+            <div className={`text-6xl md:text-8xl font-retro ${timer <= 1 ? 'text-red-500 animate-ping' : 'text-white'}`}>
+              {timer}
+            </div>
+            <span className="text-[10px] font-pixel text-retro-cyan uppercase tracking-widest mt-2">SECONDI</span>
+          </div>
+
+          <div className={`flex-1 p-6 md:p-10 border transition-all ${turn === 2 ? 'border-retro-cyan bg-retro-cyan/20 scale-105 md:scale-110 shadow-[0_0_30px_rgba(0,255,255,0.2)]' : 'border-white/5 bg-black/40 opacity-50'}`}>
+            <span className="text-[10px] font-pixel uppercase tracking-widest block mb-2 text-retro-yellow">P2</span>
+            <div className="text-xl md:text-3xl font-retro uppercase">SFIDANTE B</div>
+          </div>
+        </div>
+
+        {timer > 0 ? (
+          role === 'regia' ? (
+            <button 
+              onClick={nextTurn}
+              className="retro-btn w-full text-3xl py-10 bg-white text-black"
+            >
+              {isActive ? 'PASSA IL TURNO' : 'INIZIA ROUND'}
+            </button>
+          ) : (
+            <div className="text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
+              {isActive ? `SQUADRA 0${turn} IN AZIONE!` : 'IN ATTESA DEL VIA...'}
+            </div>
+          )
+        ) : (
+          <div className="space-y-8">
+            <div className="bg-retro-pink/10 border border-retro-pink p-10 shadow-[0_0_40px_rgba(255,0,255,0.1)] backdrop-blur-md">
+              <AlertCircle className="w-16 h-16 text-retro-pink mx-auto mb-6" />
+              <h3 className="text-4xl font-retro uppercase retro-title">K.O. TECNICO</h3>
+              <p className="text-white font-pixel text-sm mt-4 uppercase">IL GIOCATORE {turn} HA ESAURITO IL TEMPO!</p>
+            </div>
+
+            {scores.p1 < 2 && scores.p2 < 2 && round < 3 ? (
+              role === 'regia' && (
+                <button 
+                  onClick={nextRound}
+                  className="retro-btn w-full text-2xl py-8 bg-retro-cyan"
+                >
+                  PROSSIMO ROUND <Play className="w-6 h-6 ml-4" />
+                </button>
+              )
+            ) : (
+              <div className="bg-green-500/10 border border-green-500 p-10 shadow-[0_0_40px_rgba(34,197,94,0.1)] backdrop-blur-md">
+                <Trophy className="w-16 h-16 text-green-500 mx-auto mb-6" />
+                <h3 className="text-4xl font-retro uppercase text-green-500">VINCITORE</h3>
+                <p className="text-white mt-4 text-3xl font-retro uppercase">GIOCATORE {scores.p1 > scores.p2 ? '1' : '2'}</p>
+                {role === 'regia' && (
+                  <button 
+                    onClick={fetchCategories}
+                    className="mt-10 text-green-500 hover:text-white transition-colors uppercase text-xs font-pixel tracking-widest"
+                  >
+                    TORNA ALLA SELEZIONE
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {role === 'regia' && !isGameOver && (
+          <div className="mt-12">
+            <button 
+              onClick={fetchCategories}
+              className="text-retro-cyan hover:text-retro-pink transition-colors flex items-center gap-2 mx-auto uppercase text-xs font-pixel tracking-widest"
+            >
+              <RotateCcw className="w-4 h-4" /> RESET MATCH
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-md w-full text-center">
+      <Swords className="w-20 h-20 text-retro-cyan mx-auto mb-8" />
+      <h2 className="text-6xl font-retro retro-title uppercase mb-4">IL RING</h2>
+      <p className="text-retro-cyan font-mono text-lg mb-12 uppercase leading-tight tracking-widest">
+        SCONTRO 1 VS 1 AL MEGLIO DEI 3 ROUND. VELOCITÀ, MEMORIA E CATTIVERIA AGONISTICA.
+      </p>
+      {role === 'regia' ? (
+        <button 
+          onClick={fetchCategories}
+          className="retro-btn w-full text-lg py-4 bg-retro-cyan flex items-center justify-center gap-4"
+        >
+          <Play className="w-5 h-5" /> ENTRA NEL RING
+        </button>
+      ) : (
+        <div className="text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
+          In attesa che la regia inizi la sfida...
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- GAME 5: CHI È? ---
+function ChiE({ role, sharedState, emitUpdate, selectedTeamId, teams }: {
+  role: 'regia' | 'pubblico' | 'display';
+  sharedState: any;
+  emitUpdate: (u: any) => void;
+  selectedTeamId: number | null;
+  teams: Team[];
+}) {
+  const [loading, setLoading] = useState(false);
+  const [localAnswer, setLocalAnswer] = useState('');
+
+  // Preview state (locale alla regia, non sincronizzato)
+  const [previewPersonaggi, setPreviewPersonaggi] = useState<{ name: string; hint: string }[]>([]);
+  const [previewPhotos, setPreviewPhotos] = useState<Record<string, string | null>>({});
+  const [previewMode, setPreviewMode] = useState(false);
+  const [removedNames, setRemovedNames] = useState<Set<string>>(new Set());
+
+  const personaggi = sharedState.personaggi || [];
+  const currentIndex = sharedState.currentIndex ?? 0;
+  const blurLevel = sharedState.blurLevel ?? 20;
+  const revealed = sharedState.revealed || false;
+  const teamAnswers = sharedState.teamAnswers || {};
+  const photos = sharedState.photos || {};
+  const currentPersonaggio = personaggi[currentIndex] || null;
+  const currentPhoto = currentPersonaggio ? photos[currentPersonaggio.name] : null;
+
+  // Carica lista personaggi e foto → mostra anteprima alla regia
+  const startGame = async () => {
+    if (role !== 'regia') return;
+    setLoading(true);
+    setPreviewMode(false);
+    setRemovedNames(new Set());
+    try {
+      const lista = await geminiService.generateChiEPersonaggi();
+      // Carica tutte le foto in parallelo
+      const photoEntries = await Promise.all(
+        lista.map(async (p) => {
+          const url = await geminiService.getWikipediaPhoto(p.name);
+          return [p.name, url] as [string, string | null];
+        })
+      );
+      const photosMap: Record<string, string | null> = Object.fromEntries(photoEntries);
+      setPreviewPersonaggi(lista);
+      setPreviewPhotos(photosMap);
+      setPreviewMode(true);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleRemove = (name: string) => {
+    setRemovedNames(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
+  const confirmAndStart = () => {
+    const filteredPersonaggi = previewPersonaggi.filter(p => !removedNames.has(p.name));
+    const filteredPhotos: Record<string, string> = {};
+    filteredPersonaggi.forEach(p => {
+      if (previewPhotos[p.name]) filteredPhotos[p.name] = previewPhotos[p.name] as string;
+    });
+    emitUpdate({
+      gameData: {
+        ...sharedState,
+        personaggi: filteredPersonaggi,
+        photos: filteredPhotos,
+        currentIndex: 0,
+        blurLevel: 20,
+        revealed: false,
+        teamAnswers: {},
+      }
+    });
+    setPreviewMode(false);
+  };
+
+  const decreaseBlur = () => {
+    if (role !== 'regia' || revealed) return;
+    const newBlur = Math.max(0, blurLevel - 5);
+    emitUpdate({ gameData: { ...sharedState, blurLevel: newBlur } });
+  };
+
+  const revealAnswer = () => {
+    if (role !== 'regia') return;
+    emitUpdate({ gameData: { ...sharedState, revealed: true, blurLevel: 0 } });
+  };
+
+  const nextPersonaggio = () => {
+    if (role !== 'regia') return;
+    setLocalAnswer('');
+    emitUpdate({
+      gameData: {
+        ...sharedState,
+        currentIndex: currentIndex + 1,
+        blurLevel: 20,
+        revealed: false,
+        teamAnswers: {},
+      }
+    });
+  };
+
+  const submitAnswer = () => {
+    if (!localAnswer.trim() || selectedTeamId === null || role !== 'pubblico') return;
+    emitUpdate({
+      gameData: {
+        ...sharedState,
+        teamAnswers: { ...teamAnswers, [selectedTeamId]: localAnswer.trim() }
+      }
+    });
+    setLocalAnswer('');
+  };
+
+  if (loading) return <LoadingState text="Cerco i personaggi su Wikipedia..." />;
+
+  // ── SCHERMATA ANTEPRIMA (solo regia, prima che il gioco parta) ──
+  if (previewMode && role === 'regia') {
+    const attivi = previewPersonaggi.filter(p => !removedNames.has(p.name));
+    return (
+      <div className="max-w-4xl w-full">
+        {/* Header */}
+        <div className="flex items-end justify-between mb-6">
+          <div>
+            <span className="text-[9px] font-pixel text-green-400 uppercase tracking-widest block mb-1">ANTEPRIMA REGIA</span>
+            <h2 className="text-4xl font-retro uppercase retro-title text-green-400">Verifica Personaggi</h2>
+          </div>
+          <div className="text-right">
+            <span className="text-[9px] font-pixel text-retro-yellow uppercase tracking-widest block">SELEZIONATI</span>
+            <span className="text-3xl font-retro text-white">{attivi.length}/{previewPersonaggi.length}</span>
+          </div>
+        </div>
+
+        <p className="font-pixel text-[10px] text-retro-cyan/70 uppercase tracking-widest mb-6">
+          Clicca su un personaggio per escluderlo dalla sfida. Quelli senza foto verranno mostrati con l'icona utente.
+        </p>
+
+        {/* Griglia personaggi */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-8">
+          {previewPersonaggi.map((p) => {
+            const removed = removedNames.has(p.name);
+            const photo = previewPhotos[p.name];
+            return (
+              <div
+                key={p.name}
+                onClick={() => toggleRemove(p.name)}
+                className={`relative cursor-pointer border-2 transition-all duration-200 ${
+                  removed
+                    ? 'border-red-500/60 opacity-40 scale-95'
+                    : 'border-green-500/40 hover:border-green-400 hover:scale-105'
+                }`}
+                style={{ aspectRatio: '3/4' }}
+              >
+                {photo ? (
+                  <img
+                    src={photo}
+                    alt={p.name}
+                    className="w-full h-full object-cover object-top"
+                  />
+                ) : (
+                  <div className="w-full h-full bg-[#000044] flex flex-col items-center justify-center gap-2">
+                    <User className="w-8 h-8 text-retro-cyan/30" />
+                    <span className="font-pixel text-[8px] text-retro-cyan/40 uppercase text-center px-1">No foto</span>
+                  </div>
+                )}
+
+                {/* Overlay nome */}
+                <div className="absolute bottom-0 left-0 right-0 bg-black/80 px-1 py-1.5">
+                  <p className="font-pixel text-[7px] text-white uppercase text-center leading-tight truncate">{p.name}</p>
+                  <p className="font-pixel text-[6px] text-retro-cyan/60 uppercase text-center leading-tight truncate">{p.hint}</p>
+                </div>
+
+                {/* Badge rimosso */}
+                {removed && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <XCircle className="w-10 h-10 text-red-500" />
+                  </div>
+                )}
+
+                {/* Badge no-foto warning */}
+                {!photo && !removed && (
+                  <div className="absolute top-1 right-1">
+                    <AlertCircle className="w-4 h-4 text-retro-yellow" />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Azioni */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <button
+            onClick={confirmAndStart}
+            disabled={attivi.length === 0}
+            className="retro-btn flex-1 py-4 bg-green-500 text-black text-lg flex items-center justify-center gap-3 disabled:opacity-40"
+          >
+            <Play className="w-5 h-5" /> CONFERMA E INIZIA ({attivi.length} personaggi)
+          </button>
+          <button
+            onClick={() => { setPreviewMode(false); startGame(); }}
+            className="retro-btn px-6 py-4 bg-black border-2 border-retro-cyan text-retro-cyan text-sm flex items-center justify-center gap-2"
+          >
+            <RotateCcw className="w-4 h-4" /> RIGENERA
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Schermata fine gioco
+  if (personaggi.length > 0 && currentIndex >= personaggi.length) {
+    return (
+      <div className="text-center max-w-md w-full">
+        <Trophy className="w-24 h-24 text-retro-yellow mx-auto mb-8 animate-bounce" />
+        <h2 className="text-6xl font-retro retro-title mb-4">FINE!</h2>
+        <p className="text-retro-cyan font-pixel text-sm uppercase mb-12">Tutti i personaggi sono stati indovinati!</p>
+        {role === 'regia' && (
+          <button onClick={startGame} className="retro-btn w-full text-2xl py-6 bg-retro-pink">
+            NUOVA PARTITA
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Schermata di gioco
+  if (personaggi.length > 0 && currentPersonaggio) {
+    return (
+      <div className="max-w-3xl w-full">
+        {/* Header */}
+        <div className="flex justify-between items-end mb-6">
+          <div>
+            <span className="text-xs font-pixel text-retro-cyan uppercase tracking-widest block mb-1">
+              PERSONAGGIO {currentIndex + 1}/{personaggi.length}
+            </span>
+            <h2 className="text-4xl font-retro uppercase tracking-tight retro-title text-green-400">Chi È?</h2>
+          </div>
+          <div className="text-right">
+            <span className="text-xs font-pixel text-retro-yellow uppercase tracking-widest block">SFOCATURA</span>
+            <div className="text-3xl font-retro text-white">{blurLevel}px</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Foto */}
+          <div className="relative overflow-hidden border-4 border-green-500/50 shadow-[0_0_30px_rgba(34,197,94,0.2)]" style={{ aspectRatio: '1/1' }}>
+            {currentPhoto ? (
+              <img
+                src={currentPhoto}
+                alt="Chi è?"
+                className="w-full h-full object-cover object-top transition-all duration-700"
+                style={{ filter: `blur(${blurLevel}px) brightness(0.95)`, transform: blurLevel > 0 ? 'scale(1.15)' : 'scale(1)' }}
+              />
+            ) : (
+              <div className="w-full h-full bg-[#000044] flex items-center justify-center">
+                <User className="w-24 h-24 text-retro-cyan/30" />
+                <span className="font-pixel text-xs text-retro-cyan/50 uppercase mt-4 absolute bottom-4">Foto non disponibile</span>
+              </div>
+            )}
+            {/* Overlay sfocatura */}
+            {blurLevel > 0 && !revealed && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="bg-black/40 backdrop-blur-sm px-4 py-2 border border-white/10">
+                  <span className="font-pixel text-[10px] text-white/60 uppercase tracking-widest">
+                    {blurLevel > 15 ? '???' : blurLevel > 10 ? 'quasi...' : 'quasi ci sei!'}
+                  </span>
+                </div>
+              </div>
+            )}
+            {revealed && (
+              <div className="absolute bottom-0 left-0 right-0 bg-green-500 py-3 text-center">
+                <span className="font-retro text-black text-xl uppercase tracking-tight">{currentPersonaggio.name}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Pannello laterale */}
+          <div className="flex flex-col gap-4">
+            {/* Indizio */}
+            <div className="bg-[#000044] border border-retro-cyan/20 p-4">
+              <span className="text-[9px] font-pixel text-retro-cyan uppercase tracking-widest block mb-2">INDIZIO</span>
+              <p className="font-mono text-white uppercase text-lg">{currentPersonaggio.hint}</p>
+            </div>
+
+            {/* Risposte squadre */}
+            <div className="bg-[#000044] border border-white/10 p-4 flex-1">
+              <span className="text-[9px] font-pixel text-retro-yellow uppercase tracking-widest block mb-3">RISPOSTE</span>
+              {teams.map(team => {
+                const answer = teamAnswers[team.id];
+                return (
+                  <div key={team.id} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+                    <span className={`text-[10px] font-pixel uppercase ${
+                      team.color === 'bg-retro-pink' ? 'text-retro-pink' :
+                      team.color === 'bg-retro-cyan' ? 'text-retro-cyan' : 'text-retro-yellow'
+                    }`}>{team.name}</span>
+                    {answer ? (
+                      <span className="font-mono text-white text-sm uppercase">{answer}</span>
+                    ) : (
+                      <span className="font-pixel text-white/20 text-[9px] uppercase">in attesa...</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Input risposta (solo pubblico) */}
+            {role === 'pubblico' && selectedTeamId !== null && !revealed && (
+              <div className="bg-[#000066] border-2 border-green-500/50 p-4">
+                <span className="text-[9px] font-pixel text-green-400 uppercase tracking-widest block mb-2">La tua risposta</span>
+                {teamAnswers[selectedTeamId] ? (
+                  <div className="text-center py-2">
+                    <span className="font-mono text-white uppercase">{teamAnswers[selectedTeamId]}</span>
+                    <span className="block text-[9px] font-pixel text-green-400/60 mt-1 uppercase">Risposta inviata!</span>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={localAnswer}
+                      onChange={e => setLocalAnswer(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && submitAnswer()}
+                      placeholder="Scrivi il nome..."
+                      className="flex-1 bg-black/50 border-2 border-green-500/30 p-3 font-mono text-white uppercase focus:outline-none focus:border-green-500 placeholder:opacity-30 text-sm"
+                    />
+                    <button
+                      onClick={submitAnswer}
+                      disabled={!localAnswer.trim()}
+                      className="px-4 bg-green-500 text-black font-pixel text-[10px] uppercase hover:bg-green-400 disabled:opacity-40 transition-colors"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Controlli regia */}
+            {role === 'regia' && (
+              <div className="flex flex-col gap-2">
+                {!revealed ? (
+                  <>
+                    <button
+                      onClick={decreaseBlur}
+                      disabled={blurLevel === 0}
+                      className="retro-btn py-3 bg-retro-yellow text-black disabled:opacity-40 flex items-center justify-center gap-2"
+                    >
+                      <Eye className="w-4 h-4" /> RIVELA UN PO' ({blurLevel > 0 ? `-5px` : 'max'})
+                    </button>
+                    <button
+                      onClick={revealAnswer}
+                      className="retro-btn py-3 bg-green-500 text-black flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle2 className="w-4 h-4" /> RIVELA RISPOSTA
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={nextPersonaggio}
+                    className="retro-btn py-3 bg-retro-cyan text-black"
+                  >
+                    PROSSIMO PERSONAGGIO {'>>'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Messaggio display/pubblico quando rivelato */}
+            {revealed && role !== 'regia' && (
+              <div className="bg-green-500/10 border border-green-500 p-4 text-center">
+                <span className="font-retro text-green-400 text-2xl uppercase">{currentPersonaggio.name}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Schermata iniziale
+  return (
+    <div className="max-w-md w-full text-center">
+      <User className="w-20 h-20 text-green-400 mx-auto mb-8" />
+      <h2 className="text-6xl font-retro retro-title uppercase mb-4 text-green-400">Chi È?</h2>
+
+      <p className="text-retro-cyan font-mono text-lg mb-12 uppercase leading-tight tracking-widest">
+        INDOVINA IL PERSONAGGIO FAMOSO DALLA FOTO SFOCATA. LA FOTO SI RIVELA GRADUALMENTE!
+      </p>
+      {role === 'regia' ? (
+        <button
+          onClick={startGame}
+          className="retro-btn w-full text-2xl py-6 bg-green-500 text-black flex items-center justify-center gap-4"
+        >
+          <Play className="w-6 h-6" /> INIZIA SFIDA
+        </button>
+      ) : (
+        <div className="text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
+          In attesa che la regia inizi la sfida...
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LoadingState({ text }: { text: string }) {
+  return (
+    <div className="text-center">
+      <motion.div 
+        animate={{ rotate: 360 }}
+        transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+        className="w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full mx-auto mb-8"
+      />
+      <p className="text-xl font-mono uppercase tracking-widest text-zinc-500 animate-pulse">{text}</p>
+    </div>
+  );
+}
