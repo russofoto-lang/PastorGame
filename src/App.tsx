@@ -665,7 +665,7 @@ function SfidaGenio({ role, sharedState, emitUpdate, emitOptionSelected, selecte
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.8 }}
                 onClick={revealAnswer}
-                className="retro-btn w-full text-lg py-4 bg-retro-yellow text-black"
+                className="retro-btn w-full text-base py-3 bg-retro-yellow text-black"
               >
                 RIVELA RISPOSTA ({Object.keys(teamAnswers).length} squadr{Object.keys(teamAnswers).length === 1 ? 'a' : 'e'} ha risposto)
               </motion.button>
@@ -676,7 +676,7 @@ function SfidaGenio({ role, sharedState, emitUpdate, emitOptionSelected, selecte
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 1.2 }}
                 onClick={nextQuestion}
-                className="retro-btn w-full text-lg py-4"
+                className="retro-btn w-full text-base py-3"
               >
                 PROSSIMA DOMANDA {">>"}
               </motion.button>
@@ -729,7 +729,7 @@ function SfidaGenio({ role, sharedState, emitUpdate, emitOptionSelected, selecte
           <button 
             onClick={startChallenge}
             disabled={!localTopic}
-            className="retro-btn w-full text-2xl py-6 bg-retro-pink disabled:opacity-50 disabled:cursor-not-allowed"
+            className="retro-btn w-full text-lg py-3 bg-retro-pink disabled:opacity-50 disabled:cursor-not-allowed"
           >
             GENERA SFIDA
           </button>
@@ -1062,7 +1062,7 @@ if (localTimerRef.current <= 0) {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={generateWords}
-            className="retro-btn w-full text-2xl py-6 bg-retro-pink shadow-[0_0_30px_rgba(255,0,255,0.4)]"
+            className="retro-btn w-full text-lg py-3 bg-retro-pink shadow-[0_0_30px_rgba(255,0,255,0.4)]"
           >
             <span className="flex items-center justify-center gap-3">
               <Zap className="w-6 h-6" /> GENERA LE PAROLE
@@ -1126,7 +1126,7 @@ if (localTimerRef.current <= 0) {
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             onClick={() => nextTeamId !== undefined && startTeamRound(nextTeamId)}
-            className="retro-btn w-full text-2xl py-6 bg-retro-cyan text-black"
+            className="retro-btn w-full text-lg py-3 bg-retro-cyan text-black"
           >
             VIA! INIZIA IL ROUND →
           </motion.button>
@@ -1292,7 +1292,7 @@ if (localTimerRef.current <= 0) {
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.97 }}
                 onClick={() => nextWord(true)}
-                className="retro-btn w-full py-6 text-2xl bg-retro-pink shadow-[0_0_20px_rgba(255,0,255,0.4)]"
+                className="retro-btn w-full py-3 text-lg bg-retro-pink shadow-[0_0_20px_rgba(255,0,255,0.4)]"
               >
                 PROSSIMA PAROLA →
               </motion.button>
@@ -1387,7 +1387,7 @@ if (localTimerRef.current <= 0) {
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
               onClick={generateWords}
-              className="retro-btn flex-1 py-5 text-xl bg-retro-pink"
+              className="retro-btn flex-1 py-3 text-base bg-retro-pink"
             >
               <Zap className="w-5 h-5 inline mr-2" /> NUOVE PAROLE
             </motion.button>
@@ -1410,151 +1410,154 @@ if (localTimerRef.current <= 0) {
 
 // --- GAME 3: TIMELINE ---
 function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' | 'display'; sharedState: any; emitUpdate: (update: any) => void }) {
-  const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const [preloadedEvents, setPreloadedEvents] = useState<{ [round: number]: any[] }>({});
 
-  // Sync from sharedState
+  const CATEGORY = 'Tutto il Sapere: storia, scienza, sport, cultura generale, cinema, musica, geografia';
+  const CATEGORY_LABEL = 'Tutto il Sapere';
+  const roundConfig = [3, 5, 7];
+
   const selectedCategory = sharedState.category || '';
   const round = sharedState.round || 1;
   const events = sharedState.events || [];
   const shuffled = sharedState.shuffled || [];
-  const timer = sharedState.timer ?? 180;
   const isActive = sharedState.isActive || false;
   const gameOver = sharedState.gameOver || false;
   const result = sharedState.result || null;
 
-  const roundConfig = [3, 5, 7];
+  // ── TIMER LOCALE ──
+  const [localTimer, setLocalTimer] = useState(90);
+  const localTimerRef = React.useRef(90);
+  const timerRef = React.useRef<any>(null);
+  const sharedStateRef = React.useRef(sharedState);
+  sharedStateRef.current = sharedState;
+
+  const prevIsActiveRef = React.useRef(isActive);
+  useEffect(() => {
+    const justStarted = !prevIsActiveRef.current && isActive && round === 1;
+    if (justStarted) {
+      localTimerRef.current = 90;
+      setLocalTimer(90);
+    }
+    prevIsActiveRef.current = isActive;
+  }, [isActive, round]);
+
+  // Timer si ferma quando result != null (verifica in corso), riparte su riprova
+  useEffect(() => {
+    clearInterval(timerRef.current);
+    if (role === 'regia' && isActive && !gameOver && !result) {
+      timerRef.current = setInterval(() => {
+        localTimerRef.current -= 1;
+        setLocalTimer(localTimerRef.current);
+        if (localTimerRef.current % 5 === 0) {
+          emitUpdate({ gameData: { ...sharedStateRef.current, syncedTimer: localTimerRef.current } });
+        }
+        if (localTimerRef.current <= 0) {
+          clearInterval(timerRef.current);
+          emitUpdate({ gameData: { ...sharedStateRef.current, gameOver: true, isActive: false } });
+        }
+      }, 1000);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [role, isActive, gameOver, result, round]);
 
   useEffect(() => {
-    let interval: any;
-    if (isActive && timer > 0 && !gameOver && role === 'regia') {
-      interval = setInterval(() => {
-        emitUpdate({
-          gameData: {
-            ...sharedState,
-            timer: timer - 1
-          }
-        });
-      }, 1000);
-    } else if (timer === 0 && role === 'regia') {
-      emitUpdate({
-        gameData: {
-          ...sharedState,
-          gameOver: true,
-          isActive: false
-        }
-      });
+    if (role !== 'regia' && sharedState.syncedTimer != null) {
+      setLocalTimer(sharedState.syncedTimer);
     }
-    return () => clearInterval(interval);
-  }, [isActive, timer, gameOver, role, sharedState, emitUpdate]);
+  }, [sharedState.syncedTimer]);
 
-   const startGame = async () => {
+  const startGame = async () => {
     if (role !== 'regia') return;
     setLoading(true);
+    setPreloadedEvents({});
     try {
-      const count = roundConfig[0];
-      const data = await geminiService.generateTimelineEvents('Tutto il Sapere: storia, scienza, sport, cultura generale, cinema, musica, geografia', count);
+      const data1 = await geminiService.generateTimelineEvents(CATEGORY, roundConfig[0]);
       emitUpdate({
         gameData: {
-          ...sharedState,
-          category: 'Tutto il Sapere',
-          events: data,
-          shuffled: [...data].sort(() => Math.random() - 0.5),
+          ...sharedStateRef.current,
+          category: CATEGORY_LABEL,
+          events: data1,
+          shuffled: [...data1].sort(() => Math.random() - 0.5),
           round: 1,
-          timer: 90,
           isActive: true,
           gameOver: false,
-          result: null
+          result: null,
+          syncedTimer: 90,
         }
       });
-    } catch (e) {
-      console.error(e);
-    } finally {
       setLoading(false);
-    }
-  };
-
-  const startWithCategory = async (category: string) => {
-    if (role !== 'regia') return;
-    setLoading(true);
-    try {
-      const count = roundConfig[0];
-      const data = await geminiService.generateTimelineEvents(category, count);
-      emitUpdate({
-        gameData: {
-          ...sharedState,
-          category: category,
-          events: data,
-          shuffled: [...data].sort(() => Math.random() - 0.5),
-          round: 1,
-          timer: 180,
-          isActive: true,
-          gameOver: false,
-          result: null
-        }
-      });
+      // Precarica round 2 e 3 in background mentre si gioca
+      geminiService.generateTimelineEvents(CATEGORY, roundConfig[1])
+        .then(d => setPreloadedEvents(prev => ({ ...prev, 2: d })))
+        .catch(console.error);
+      geminiService.generateTimelineEvents(CATEGORY, roundConfig[2])
+        .then(d => setPreloadedEvents(prev => ({ ...prev, 3: d })))
+        .catch(console.error);
     } catch (e) {
       console.error(e);
-    } finally {
       setLoading(false);
     }
   };
 
   const nextRound = async () => {
     if (role !== 'regia') return;
-    if (round >= 4) {
-      emitUpdate({ gameData: { ...sharedState, gameOver: true } });
+    const nextR = round + 1;
+    if (nextR > roundConfig.length) {
+      emitUpdate({ gameData: { ...sharedStateRef.current, gameOver: true } });
       return;
     }
-    setLoading(true);
-    try {
-      const nextR = round + 1;
-      const count = roundConfig[nextR - 1];
-      const data = await geminiService.generateTimelineEvents(selectedCategory, count);
+    const preloaded = preloadedEvents[nextR];
+    if (preloaded) {
       emitUpdate({
         gameData: {
-          ...sharedState,
-          events: data,
-          shuffled: [...data].sort(() => Math.random() - 0.5),
+          ...sharedStateRef.current,
+          events: preloaded,
+          shuffled: [...preloaded].sort(() => Math.random() - 0.5),
           round: nextR,
-          result: null
+          result: null,
+          isActive: true,
+          syncedTimer: 90,
         }
       });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
+    } else {
+      setLoading(true);
+      try {
+        const data = await geminiService.generateTimelineEvents(CATEGORY, roundConfig[nextR - 1]);
+        emitUpdate({
+          gameData: {
+            ...sharedStateRef.current,
+            events: data,
+            shuffled: [...data].sort(() => Math.random() - 0.5),
+            round: nextR,
+            result: null,
+            isActive: true,
+            syncedTimer: 90,
+          }
+        });
+      } catch (e) { console.error(e); }
+      finally { setLoading(false); }
     }
   };
 
   const move = (index: number, direction: 'up' | 'down') => {
-    if (result || (role !== 'regia' && role !== 'pubblico')) return;
+    if (result?.correct || (role !== 'regia' && role !== 'pubblico')) return;
     const newArr = [...shuffled];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
     if (targetIndex < 0 || targetIndex >= newArr.length) return;
     [newArr[index], newArr[targetIndex]] = [newArr[targetIndex], newArr[index]];
-    emitUpdate({
-      gameData: {
-        ...sharedState,
-        shuffled: newArr
-      }
-    });
+    emitUpdate({ gameData: { ...sharedStateRef.current, shuffled: newArr } });
   };
 
   const check = () => {
     if (role !== 'regia') return;
     const sorted = [...events].sort((a: any, b: any) => a.year - b.year);
     const isPerfect = shuffled.every((ev: any, i: number) => ev.year === sorted[i].year);
-    
+    // NON tocca isActive: timer riprende se si clicca RIPROVA
     emitUpdate({
       gameData: {
-        ...sharedState,
-        result: { 
-          correct: isPerfect, 
-          score: isPerfect ? (round * 10) : 0 
-        },
-        // Timer si ferma solo se corretto, altrimenti continua a girare
-        isActive: !isPerfect ? sharedState.isActive : false
+        ...sharedStateRef.current,
+        result: { correct: isPerfect, score: isPerfect ? (round * 10) : 0 },
       }
     });
   };
@@ -1564,29 +1567,17 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
   if (gameOver) {
     return (
       <div className="max-w-md w-full text-center">
-        <Trophy className="w-20 h-20 text-retro-yellow mx-auto mb-8" />
-        <h2 className="text-6xl font-retro retro-title uppercase mb-4">GAME OVER</h2>
-        <p className="text-2xl font-retro text-retro-cyan mb-8 uppercase">Round: {round - (result?.correct ? 0 : 1)} / 4</p>
-        <div className="bg-[#000044] p-8 border border-retro-cyan/30 shadow-[0_0_30px_rgba(0,255,255,0.1)] mb-12 backdrop-blur-md">
+        <Trophy className="w-16 h-16 text-retro-yellow mx-auto mb-6" />
+        <h2 className="text-4xl md:text-6xl font-retro retro-title uppercase mb-4">GAME OVER</h2>
+        <p className="text-lg font-retro text-retro-cyan mb-6 uppercase">Round completati: {round} / {roundConfig.length}</p>
+        <div className="bg-[#000044] p-6 border border-retro-cyan/30 mb-8">
           <span className="text-xs font-pixel text-retro-yellow uppercase tracking-widest block mb-2">TEMPO RIMANENTE</span>
-          <div className="text-5xl font-retro">{timer}s</div>
+          <div className="text-4xl font-retro">{localTimer}s</div>
         </div>
         {role === 'regia' && (
-          <button 
-            onClick={() => {
-              emitUpdate({
-                gameData: {
-                  ...sharedState,
-                  selectedCategory: '',
-                  events: [],
-                  gameOver: false,
-                  round: 1,
-                  isActive: false,
-                  result: null
-                }
-              });
-            }}
-            className="retro-btn w-full text-2xl py-6 bg-retro-pink"
+          <button
+            onClick={() => emitUpdate({ gameData: { ...sharedStateRef.current, category: '', events: [], gameOver: false, round: 1, isActive: false, result: null } })}
+            className="retro-btn w-full text-lg py-3 bg-retro-pink"
           >
             RIPROVA
           </button>
@@ -1599,62 +1590,53 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
     const sorted = [...events].sort((a: any, b: any) => a.year - b.year);
     return (
       <div className="max-w-3xl w-full">
-        <div className="flex justify-between items-end mb-12">
+        <div className="flex justify-between items-center mb-4">
           <div className="text-left">
-            <span className="text-xs font-pixel text-retro-cyan uppercase tracking-widest block mb-1">ROUND {round}/4</span>
-            <h2 className="text-4xl font-retro uppercase tracking-tight retro-title">{selectedCategory}</h2>
+            <span className="text-[10px] font-pixel text-retro-cyan uppercase tracking-widest block mb-0.5">ROUND {round}/{roundConfig.length}</span>
+            <h2 className="text-2xl md:text-4xl font-retro uppercase tracking-tight retro-title">{selectedCategory}</h2>
           </div>
-          <div className="flex gap-8">
-            <div className="text-right">
-              <span className="text-xs font-pixel text-retro-yellow uppercase tracking-widest block">TIMER</span>
-              <div className={`text-4xl font-retro ${timer < 20 ? 'text-red-500 animate-pulse' : 'text-white'}`}>{timer}s</div>
-            </div>
+          <div className="text-right">
+            <span className="text-[10px] font-pixel text-retro-yellow uppercase tracking-widest block">TIMER</span>
+            <div className={`text-3xl md:text-4xl font-retro ${localTimer < 20 ? 'text-red-500 animate-pulse' : 'text-white'}`}>{localTimer}s</div>
           </div>
         </div>
 
-        <div className="space-y-4 mb-12">
+        <div className="space-y-2 mb-4">
           {shuffled.map((ev: any, i: number) => {
             const isCorrectPosition = result && ev.year === sorted[i].year;
-            
             return (
-              <motion.div 
+              <motion.div
                 layout
                 key={ev.event}
-                className={`p-5 border flex items-center gap-6 transition-all ${
-                  result 
-                    ? (isCorrectPosition ? 'bg-green-500 border-transparent text-black shadow-[0_0_20px_rgba(34,197,94,0.3)]' : 'bg-retro-pink border-transparent text-black shadow-[0_0_20px_rgba(255,0,255,0.3)]') 
-                    : 'bg-[#000066] border-retro-cyan/30 shadow-[0_0_15px_rgba(0,255,255,0.1)]'
+                className={`p-3 border flex items-center gap-3 transition-all ${
+                  result
+                    ? (isCorrectPosition ? 'bg-green-500 border-transparent text-black' : 'bg-retro-pink border-transparent text-black')
+                    : 'bg-[#000066] border-retro-cyan/30'
                 }`}
               >
                 {(role === 'regia' || role === 'pubblico') && (
-                  <div className="flex flex-col gap-3">
-                    <button 
-                      onClick={() => move(i, 'up')} 
-                      className={`p-3 border-2 transition-colors ${
-                        result ? 'border-black/20 text-black/40' : 'bg-black/20 border-retro-cyan text-retro-cyan hover:bg-retro-cyan hover:text-black'
-                      }`}
-                       disabled={i === 0 || result?.correct}
+                  <div className="flex flex-col gap-1">
+                    <button
+                      onClick={() => move(i, 'up')}
+                      className={`p-1.5 border-2 transition-colors ${result?.correct ? 'border-black/20 text-black/40' : 'bg-black/20 border-retro-cyan text-retro-cyan hover:bg-retro-cyan hover:text-black'}`}
+                      disabled={i === 0 || !!result?.correct}
                     >
-                      <ChevronLeft className="w-8 h-8 rotate-90" />
+                      <ChevronLeft className="w-4 h-4 rotate-90" />
                     </button>
-                    <button 
-                      onClick={() => move(i, 'down')} 
-                      className={`p-3 border-2 transition-colors ${
-                        result ? 'border-black/20 text-black/40' : 'bg-black/20 border-retro-cyan text-retro-cyan hover:bg-retro-cyan hover:text-black'
-                      }`}
-                      disabled={i === shuffled.length - 1 || result?.correct}
+                    <button
+                      onClick={() => move(i, 'down')}
+                      className={`p-1.5 border-2 transition-colors ${result?.correct ? 'border-black/20 text-black/40' : 'bg-black/20 border-retro-cyan text-retro-cyan hover:bg-retro-cyan hover:text-black'}`}
+                      disabled={i === shuffled.length - 1 || !!result?.correct}
                     >
-                      <ChevronLeft className="w-8 h-8 -rotate-90" />
+                      <ChevronLeft className="w-4 h-4 -rotate-90" />
                     </button>
                   </div>
                 )}
                 <div className="flex-1">
-                  <p className="text-xl font-mono uppercase leading-tight tracking-tight">{ev.event}</p>
-                  {result && (
-                    <span className="text-sm font-pixel text-black/70 mt-2 block">{ev.year}</span>
-                  )}
+                  <p className="text-sm md:text-lg font-mono uppercase leading-tight">{ev.event}</p>
+                  {result && <span className="text-xs font-pixel text-black/70 mt-1 block">{ev.year}</span>}
                 </div>
-                <div className={`text-4xl font-retro transition-colors ${isCorrectPosition ? 'text-black' : result ? 'text-black/40' : 'text-retro-yellow'}`}>
+                <div className={`text-2xl md:text-3xl font-retro ${isCorrectPosition ? 'text-black' : result ? 'text-black/40' : 'text-retro-yellow'}`}>
                   {i + 1 < 10 ? `0${i + 1}` : i + 1}
                 </div>
               </motion.div>
@@ -1662,40 +1644,35 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
           })}
         </div>
 
-        <div className="flex gap-4">
+        <div className="flex gap-3">
           {role === 'regia' && !result && (
-            <button 
-              onClick={check}
-              className="retro-btn w-full text-xl py-4 bg-retro-cyan"
-            >
+            <button onClick={check} className="retro-btn w-full text-base py-3 bg-retro-cyan">
               VERIFICA ORDINE
             </button>
           )}
           {result && (
-            <div className="w-full space-y-4">
-              <div className={`text-2xl font-retro uppercase text-center retro-title ${result.correct ? 'text-green-500' : 'text-retro-pink'}`}>
-                {result.correct ? 'ROUND SUPERATO!' : 'ERRORE NELL\'ORDINE!'}
+            <div className="w-full space-y-3">
+              <div className={`text-xl font-retro uppercase text-center retro-title ${result.correct ? 'text-green-500' : 'text-retro-pink'}`}>
+                {result.correct ? '✓ ROUND SUPERATO!' : '✗ ERRORE — RIPROVA!'}
               </div>
-              <div className="flex gap-4">
-                {role === 'regia' && result.correct ? (
-                  <button 
-                    onClick={nextRound}
-                    className="retro-btn flex-1 text-lg py-4 bg-green-500 text-black"
-                  >
-                    {round < 4 ? 'PROSSIMO ROUND' : 'VITTORIA FINALE!'}
+              <div className="flex gap-3">
+                {role === 'regia' && result.correct && (
+                  <button onClick={nextRound} className="retro-btn flex-1 text-base py-3 bg-green-500 text-black">
+                    {round < roundConfig.length ? 'PROSSIMO ROUND →' : 'VITTORIA! 🏆'}
                   </button>
-                ) : role === 'regia' ? (
-                  <button 
-                    onClick={() => emitUpdate({ gameData: { ...sharedState, result: null } })}
-                    className="retro-btn flex-1 text-lg py-4 bg-retro-yellow text-black"
+                )}
+                {role === 'regia' && !result.correct && (
+                  <button
+                    onClick={() => emitUpdate({ gameData: { ...sharedStateRef.current, result: null } })}
+                    className="retro-btn flex-1 text-base py-3 bg-retro-yellow text-black"
                   >
                     RIPROVA →
                   </button>
-                ) : null}
+                )}
                 {role === 'regia' && (
-                  <button 
-                    onClick={() => emitUpdate({ gameData: { ...sharedState, category: '', events: [] } })}
-                    className="retro-btn bg-white text-black px-6"
+                  <button
+                    onClick={() => emitUpdate({ gameData: { ...sharedStateRef.current, category: '', events: [], gameOver: false, result: null, isActive: false } })}
+                    className="retro-btn px-4 py-3 bg-white/10 border border-white/20 text-sm"
                   >
                     QUIT
                   </button>
@@ -1704,12 +1681,12 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
             </div>
           )}
           {role === 'pubblico' && !result && (
-            <div className="flex-1 text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
-              Trascina o usa le frecce per ordinare gli eventi!
+            <div className="flex-1 text-center p-3 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
+              Usa le frecce per ordinare gli eventi!
             </div>
           )}
           {role === 'display' && !result && (
-            <div className="flex-1 text-center p-4 border-2 border-dashed border-retro-cyan text-retro-cyan font-pixel text-[10px] uppercase">
+            <div className="flex-1 text-center p-3 border-2 border-dashed border-retro-cyan text-retro-cyan font-pixel text-[10px] uppercase">
               In attesa della regia...
             </div>
           )}
@@ -1720,17 +1697,14 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
 
   return (
     <div className="max-w-md w-full text-center">
-      <History className="w-20 h-20 text-retro-cyan mx-auto mb-8" />
-      <h2 className="text-6xl font-retro retro-title uppercase mb-4">TIMELINE</h2>
-      <p className="text-retro-cyan font-mono text-lg mb-12 uppercase leading-tight tracking-widest">
+      <History className="w-16 h-16 text-retro-cyan mx-auto mb-6" />
+      <h2 className="text-5xl font-retro retro-title uppercase mb-4">TIMELINE</h2>
+      <p className="text-retro-cyan font-mono text-sm mb-10 uppercase leading-tight tracking-widest">
         METTI IN ORDINE GLI EVENTI. 3 ROUND (3, 5, 7 EVENTI). HAI 90 SECONDI!
       </p>
       {role === 'regia' ? (
-        <button 
-          onClick={startGame}
-          className="retro-btn w-full text-2xl py-6 bg-retro-cyan flex items-center justify-center gap-4"
-        >
-          <Play className="w-6 h-6" /> INIZIA SFIDA
+        <button onClick={startGame} className="retro-btn w-full text-lg py-3 bg-retro-cyan flex items-center justify-center gap-3">
+          <Play className="w-5 h-5" /> INIZIA SFIDA
         </button>
       ) : (
         <div className="text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
@@ -1979,7 +1953,7 @@ function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' 
       {role === 'regia' ? (
         <button 
           onClick={fetchCategories}
-          className="retro-btn w-full text-lg py-4 bg-retro-cyan flex items-center justify-center gap-4"
+          className="retro-btn w-full text-base py-3 bg-retro-cyan flex items-center justify-center gap-4"
         >
           <Play className="w-5 h-5" /> ENTRA NEL RING
         </button>
@@ -2213,7 +2187,7 @@ function ChiE({ role, sharedState, emitUpdate, selectedTeamId, teams }: {
         <h2 className="text-6xl font-retro retro-title mb-4">FINE!</h2>
         <p className="text-retro-cyan font-pixel text-sm uppercase mb-12">Tutti i personaggi sono stati indovinati!</p>
         {role === 'regia' && (
-          <button onClick={startGame} className="retro-btn w-full text-2xl py-6 bg-retro-pink">
+          <button onClick={startGame} className="retro-btn w-full text-lg py-3 bg-retro-pink">
             NUOVA PARTITA
           </button>
         )}
@@ -2386,7 +2360,7 @@ function ChiE({ role, sharedState, emitUpdate, selectedTeamId, teams }: {
       {role === 'regia' ? (
         <button
           onClick={startGame}
-          className="retro-btn w-full text-2xl py-6 bg-green-500 text-black flex items-center justify-center gap-4"
+          className="retro-btn w-full text-lg py-3 bg-green-500 text-black flex items-center justify-center gap-4"
         >
           <Play className="w-6 h-6" /> INIZIA SFIDA
         </button>
