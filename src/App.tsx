@@ -1468,6 +1468,7 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
   }, [sharedState.syncedTimer]);
 
   const startGame = async () => {
+    console.log('startGame chiamato, role:', role, 'socket:', socket?.id);
     if (role !== 'regia') return;
     setLoading(true);
     setPreloadedEvents({});
@@ -1494,6 +1495,7 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
       geminiService.generateTimelineEvents(CATEGORY, roundConfig[2])
         .then(d => setPreloadedEvents(prev => ({ ...prev, 3: d })))
         .catch(console.error);
+       setLoading(false);
     } catch (e) {
       console.error(e);
       setLoading(false);
@@ -1521,7 +1523,7 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
         }
       });
     } else {
-      setLoading(true);
+      setLoading();
       try {
         const data = await geminiService.generateTimelineEvents(CATEGORY, roundConfig[nextR - 1]);
         emitUpdate({
