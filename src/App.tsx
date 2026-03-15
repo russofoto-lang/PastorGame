@@ -1553,7 +1553,8 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
           correct: isPerfect, 
           score: isPerfect ? (round * 10) : 0 
         },
-        isActive: false
+        // Timer si ferma solo se corretto, altrimenti continua a girare
+        isActive: !isPerfect ? sharedState.isActive : false
       }
     });
   };
@@ -1632,7 +1633,7 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
                       className={`p-3 border-2 transition-colors ${
                         result ? 'border-black/20 text-black/40' : 'bg-black/20 border-retro-cyan text-retro-cyan hover:bg-retro-cyan hover:text-black'
                       }`}
-                      disabled={i === 0 || !!result}
+                       disabled={i === 0 || result?.correct}
                     >
                       <ChevronLeft className="w-8 h-8 rotate-90" />
                     </button>
@@ -1641,7 +1642,7 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
                       className={`p-3 border-2 transition-colors ${
                         result ? 'border-black/20 text-black/40' : 'bg-black/20 border-retro-cyan text-retro-cyan hover:bg-retro-cyan hover:text-black'
                       }`}
-                      disabled={i === shuffled.length - 1 || !!result}
+                      disabled={i === shuffled.length - 1 || result?.correct}
                     >
                       <ChevronLeft className="w-8 h-8 -rotate-90" />
                     </button>
@@ -1685,10 +1686,10 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
                   </button>
                 ) : role === 'regia' ? (
                   <button 
-                    onClick={() => emitUpdate({ gameData: { ...sharedState, gameOver: true } })}
-                    className="retro-btn flex-1 text-lg py-4 bg-retro-pink"
+                    onClick={() => emitUpdate({ gameData: { ...sharedState, result: null } })}
+                    className="retro-btn flex-1 text-lg py-4 bg-retro-yellow text-black"
                   >
-                    FINE PARTITA
+                    RIPROVA →
                   </button>
                 ) : null}
                 {role === 'regia' && (
