@@ -1423,7 +1423,7 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
   const gameOver = sharedState.gameOver || false;
   const result = sharedState.result || null;
 
-  const roundConfig = [3, 5, 7, 10];
+  const roundConfig = [3, 5, 7];
 
   useEffect(() => {
     let interval: any;
@@ -1448,12 +1448,25 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
     return () => clearInterval(interval);
   }, [isActive, timer, gameOver, role, sharedState, emitUpdate]);
 
-  const fetchCategories = async () => {
+   const startGame = async () => {
     if (role !== 'regia') return;
     setLoading(true);
     try {
-      const data = await geminiService.generateTimelineCategories();
-      setCategories(data);
+      const count = roundConfig[0];
+      const data = await geminiService.generateTimelineEvents('Tutto il Sapere: storia, scienza, sport, cultura generale, cinema, musica, geografia', count);
+      emitUpdate({
+        gameData: {
+          ...sharedState,
+          category: 'Tutto il Sapere',
+          events: data,
+          shuffled: [...data].sort(() => Math.random() - 0.5),
+          round: 1,
+          timer: 90,
+          isActive: true,
+          gameOver: false,
+          result: null
+        }
+      });
     } catch (e) {
       console.error(e);
     } finally {
@@ -1704,43 +1717,16 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
     );
   }
 
-  if (categories.length > 0) {
-    return (
-      <div className="max-w-2xl w-full text-center">
-        <History className="w-20 h-20 text-retro-cyan mx-auto mb-8" />
-        <h2 className="text-5xl font-retro retro-title uppercase mb-12">SCEGLI IL TEMA</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {categories.map((cat: string, i: number) => (
-            <button
-              key={i}
-              disabled={role !== 'regia'}
-              onClick={() => startWithCategory(cat)}
-              className="p-8 bg-[#000066] border border-retro-cyan/30 hover:border-retro-pink hover:bg-retro-pink/10 transition-all text-left shadow-[0_0_20px_rgba(0,255,255,0.1)] active:scale-95 disabled:opacity-50"
-            >
-              <span className="text-xs font-pixel text-retro-yellow uppercase mb-2 block">TEMA 0{i+1}</span>
-              <span className="text-2xl font-retro uppercase leading-tight">{cat}</span>
-            </button>
-          ))}
-        </div>
-        {role !== 'regia' && (
-          <div className="mt-12 text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
-            In attesa che la regia scelga un tema...
-          </div>
-        )}
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-md w-full text-center">
       <History className="w-20 h-20 text-retro-cyan mx-auto mb-8" />
       <h2 className="text-6xl font-retro retro-title uppercase mb-4">TIMELINE</h2>
       <p className="text-retro-cyan font-mono text-lg mb-12 uppercase leading-tight tracking-widest">
-        METTI IN ORDINE GLI EVENTI STORICI. 4 ROUND, DIFFICOLTÀ CRESCENTE (3, 5, 7, 10 EVENTI). HAI 3 MINUTI!
+        METTI IN ORDINE GLI EVENTI. 3 ROUND (3, 5, 7 EVENTI). HAI 90 SECONDI!
       </p>
       {role === 'regia' ? (
         <button 
-          onClick={fetchCategories}
+          onClick={startGame}
           className="retro-btn w-full text-2xl py-6 bg-retro-cyan flex items-center justify-center gap-4"
         >
           <Play className="w-6 h-6" /> INIZIA SFIDA
@@ -1878,33 +1864,6 @@ function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' 
   };
 
   if (loading) return <LoadingState text="Preparando il Ring..." />;
-
-  if (categories.length > 0) {
-    return (
-      <div className="max-w-2xl w-full text-center">
-        <Swords className="w-20 h-20 text-retro-cyan mx-auto mb-8" />
-        <h2 className="text-5xl font-retro retro-title uppercase mb-12">SCEGLI IL TERRENO</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {categories.map((cat: string, i: number) => (
-            <button
-              key={i}
-              disabled={role !== 'regia'}
-              onClick={() => startWithCategory(cat)}
-              className="p-8 bg-[#000066] border border-retro-cyan/30 hover:border-retro-pink hover:bg-retro-pink/10 transition-all text-left shadow-[0_0_20px_rgba(0,255,255,0.1)] active:scale-95 disabled:opacity-50"
-            >
-              <span className="text-xs font-pixel text-retro-yellow uppercase mb-2 block">SETTORE 0{i+1}</span>
-              <span className="text-2xl font-retro uppercase leading-tight">{cat}</span>
-            </button>
-          ))}
-        </div>
-        {role !== 'regia' && (
-          <div className="mt-12 text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
-            In attesa che la regia scelga il terreno...
-          </div>
-        )}
-      </div>
-    );
-  }
 
   if (theme) {
     const isGameOver = scores.p1 === 2 || scores.p2 === 2 || (round === 3 && timer === 0);
