@@ -776,20 +776,16 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
   const wordRevealedRef = React.useRef(false);
   wordRevealedRef.current = wordRevealed;
 
-  // Reset timer quando inizia una nuova fase di gioco
+  // Reset timer SOLO quando il round inizia (phase diventa 'playing').
+  // NON resettare al cambio parola: il timer è UNICO per tutte le 15 parole del round.
   const prevPhaseRef = React.useRef(phase);
-  const prevWordIndexRef = React.useRef(currentWordIndex);
   useEffect(() => {
-    // Nuova fase playing O nuova parola → reset timer locale a 120
-    const phaseJustStarted = prevPhaseRef.current !== 'playing' && phase === 'playing';
-    const wordChanged = prevWordIndexRef.current !== currentWordIndex && phase === 'playing';
-    if (phaseJustStarted || wordChanged) {
+    if (prevPhaseRef.current !== 'playing' && phase === 'playing') {
       localTimerRef.current = 120;
       setLocalTimer(120);
     }
     prevPhaseRef.current = phase;
-    prevWordIndexRef.current = currentWordIndex;
-  }, [phase, currentWordIndex]);
+  }, [phase]);
 
   // Avvia/ferma il countdown locale
   useEffect(() => {
