@@ -814,7 +814,10 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
         localTimerRef.current -= 1;
         setLocalTimer(localTimerRef.current);
 
-        if (localTimerRef.current <= 0) {
+        if (localTimerRef.current % 5 === 0) {
+          emitUpdate({ gameData: { ...sharedStateRef.current, syncedTimer: localTimerRef.current } });
+        }
+if (localTimerRef.current <= 0) {
           clearInterval(timerRef.current);
           // Tempo scaduto: invia evento discreto al server
           handleTimeOut();
