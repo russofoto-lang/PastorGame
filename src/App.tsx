@@ -1184,6 +1184,14 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
             </p>
           </div>
 
+          {/* Parola in chiaro — solo regia */}
+          {role === 'regia' && (
+            <div className="mb-6 px-4 py-3 bg-retro-pink/10 border border-retro-pink/40 flex items-center gap-3">
+              <span className="text-[9px] font-pixel text-retro-pink uppercase tracking-widest whitespace-nowrap">RISPOSTA</span>
+              <span className="font-retro text-2xl text-retro-pink uppercase tracking-widest">{wordUpper}</span>
+            </div>
+          )}
+
           {/* Parola con lettere */}
           <div className="border-t-2 border-white/10 pt-6">
             <span className="text-[10px] font-pixel text-white/40 uppercase tracking-widest block mb-3">
