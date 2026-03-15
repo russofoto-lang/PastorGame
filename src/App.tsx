@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { geminiService, Question, TimelineEvent } from './services/gemini';
 
-type GameMode = 'home' | 'genio' | 'memoria' | 'timeline' | 'ring' | 'chie';
+type GameMode = 'home' | 'genio' | 'duellos' | 'timeline' | 'ring' | 'chie';
 
 interface Team {
   id: number;
@@ -86,7 +86,10 @@ export default function App() {
   });
 
   useEffect(() => {
-    socket = io();
+    socket = io('/', { transports: ['websocket', 'polling'] });
+
+    socket.on('connect', () => console.log('✅ SOCKET CONNECTED TO SERVER:', socket.id));
+    socket.on('disconnect', () => console.log('❌ SOCKET DISCONNECTED'));
 
     socket.on('stateUpdate', (state: any) => {
       if (state.mode) setMode(state.mode);
@@ -191,10 +194,10 @@ export default function App() {
                   color="bg-retro-purple"
                 />
                 <GameCard 
-                  title="Il Duello"
+                  title="Duellos"
                   description="Un concorrente alla volta. Indovina la parola nascosta prima che il tempo scada!"
                   icon={<Swords className="w-8 h-8" />}
-                  onClick={() => changeMode('memoria')}
+                  onClick={() => changeMode('duellos')}
                   color="bg-retro-pink"
                 />
                 <GameCard 
@@ -334,7 +337,7 @@ export default function App() {
 
             <main className={`flex-1 flex flex-col items-center justify-center p-6 ${role === 'display' ? 'aspect-video w-full max-w-[177.78vh] max-h-screen mx-auto overflow-hidden relative' : ''}`}>
               {mode === 'genio' && <SfidaGenio role={role} sharedState={sharedState} emitUpdate={emitUpdate} emitOptionSelected={emitOptionSelected} selectedTeamId={selectedTeamId} teams={teams} />}
-              {mode === 'memoria' && <MemoriaStorica role={role} sharedState={sharedState} emitUpdate={emitUpdate} teams={teams} />}
+              {mode === 'duellos' && <Duellos role={role} sharedState={sharedState} emitUpdate={emitUpdate} teams={teams} />}
               {mode === 'timeline' && <TimelineGame role={role} sharedState={sharedState} emitUpdate={emitUpdate} />}
               {mode === 'ring' && <IlRing role={role} sharedState={sharedState} emitUpdate={emitUpdate} />}
               {mode === 'chie' && <ChiE role={role} sharedState={sharedState} emitUpdate={emitUpdate} selectedTeamId={selectedTeamId} teams={teams} />}
@@ -740,65 +743,138 @@ function SfidaGenio({ role, sharedState, emitUpdate, emitOptionSelected, selecte
   );
 }
 
-// --- GAME 2: IL DUELLO ---
+// --- GAME 2: DUELLOS ---
 interface DuelloTeamResult {
   teamId: number;
   teamName: string;
   teamColor: string;
   wordsFound: number;
-  timeUsed: number; // in secondi
-  completed: boolean; // ha finito tutte le 15 parole?
+  timeUsed: number;
+  completed: boolean;
 }
 
-function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pubblico' | 'display'; sharedState: any; emitUpdate: (update: any) => void; teams?: Team[] }) {
+function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pubblico' | 'display'; sharedState: any; emitUpdate: (update: any) => void; teams?: Team[] }) {
   const [loading, setLoading] = useState(false);
 
-  // Stato sincronizzato
+  // ── STATO DAL SERVER (solo dati discreti, MAI il timer) ──
   const words: { word: string; definition: string }[] = sharedState.duelloWords || [];
   const currentWordIndex: number = sharedState.currentWordIndex ?? 0;
   const revealedLetters: number[] = sharedState.revealedLetters || [];
   const wordRevealed: boolean = sharedState.wordRevealed || false;
-  const timer: number = sharedState.timer ?? 120;
-  const isActive: boolean = sharedState.isActive || false;
-  const phase: 'setup' | 'teamSelect' | 'playing' | 'roundEnd' | 'finalResults' = sharedState.phase || 'setup';
+  const phase: 'setup' | 'teamSelect' | 'playing' | 'finalResults' = sharedState.phase || 'setup';
   const activeTeamId: number | null = sharedState.activeTeamId ?? null;
   const teamResults: DuelloTeamResult[] = sharedState.teamResults || [];
   const teamsQueue: number[] = sharedState.teamsQueue || [];
   const currentTeamQueueIndex: number = sharedState.currentTeamQueueIndex ?? 0;
 
-  // Timer countdown (solo regia lo gestisce)
+  // ── TIMER: COMPLETAMENTE LOCALE — nessun tick via socket ──
+  // Il timer è solo UI. Viene resettato a 120 quando arriva phase='playing' dal server.
+  // Quando scade, la regia invia la fine del round via socket (un singolo evento discreto).
+  const [localTimer, setLocalTimer] = useState(120);
+  const timerRef = React.useRef<any>(null);
+  const localTimerRef = React.useRef(120);
+  const wordRevealedRef = React.useRef(false);
+  wordRevealedRef.current = wordRevealed;
+
+  // Reset timer quando inizia una nuova fase di gioco
+  const prevPhaseRef = React.useRef(phase);
+  const prevWordIndexRef = React.useRef(currentWordIndex);
   useEffect(() => {
-    let interval: any;
-    if (isActive && timer > 0 && role === 'regia' && phase === 'playing') {
-      interval = setInterval(() => {
-        emitUpdate({ gameData: { ...sharedState, timer: timer - 1 } });
-      }, 1000);
-    } else if (timer <= 0 && isActive && role === 'regia' && phase === 'playing') {
-      // Tempo scaduto per la squadra corrente
-      const wordsFound = words.slice(0, currentWordIndex).length + (wordRevealed ? 0 : 0);
-      const result: DuelloTeamResult = {
-        teamId: activeTeamId!,
-        teamName: teams?.find(t => t.id === activeTeamId)?.name || 'Squadra',
-        teamColor: teams?.find(t => t.id === activeTeamId)?.color || 'bg-retro-pink',
-        wordsFound: currentWordIndex, // numero di parole indovinate finora
-        timeUsed: 120,
-        completed: false
-      };
-      const newResults = [...teamResults, result];
-      const nextQueueIdx = currentTeamQueueIndex + 1;
-      const nextPhase = nextQueueIdx < teamsQueue.length ? 'teamSelect' : 'finalResults';
-      emitUpdate({
-        gameData: {
-          ...sharedState,
-          isActive: false,
-          phase: nextPhase,
-          teamResults: newResults,
-          currentTeamQueueIndex: nextQueueIdx,
-        }
-      });
+    // Nuova fase playing O nuova parola → reset timer locale a 120
+    const phaseJustStarted = prevPhaseRef.current !== 'playing' && phase === 'playing';
+    const wordChanged = prevWordIndexRef.current !== currentWordIndex && phase === 'playing';
+    if (phaseJustStarted || wordChanged) {
+      localTimerRef.current = 120;
+      setLocalTimer(120);
     }
-    return () => clearInterval(interval);
-  }, [isActive, timer, role, phase]);
+    prevPhaseRef.current = phase;
+    prevWordIndexRef.current = currentWordIndex;
+  }, [phase, currentWordIndex]);
+
+  // Avvia/ferma il countdown locale
+  useEffect(() => {
+    clearInterval(timerRef.current);
+    // Il timer gira solo se: regia, fase playing, parola non ancora trovata
+    if (role === 'regia' && phase === 'playing' && !wordRevealed) {
+      timerRef.current = setInterval(() => {
+        // Controlla sempre il ref per evitare stale closure
+        if (wordRevealedRef.current) {
+          clearInterval(timerRef.current);
+          return;
+        }
+        localTimerRef.current -= 1;
+        setLocalTimer(localTimerRef.current);
+
+        if (localTimerRef.current <= 0) {
+          clearInterval(timerRef.current);
+          // Tempo scaduto: invia evento discreto al server
+          handleTimeOut();
+        }
+      }, 1000);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [role, phase, wordRevealed, currentWordIndex]);
+
+  // Ferma il timer quando la parola viene trovata (wordRevealed cambia via socket)
+  useEffect(() => {
+    if (wordRevealed) {
+      clearInterval(timerRef.current);
+    }
+  }, [wordRevealed]);
+
+  const handleTimeOut = () => {
+    // Legge lo stato dal DOM/ref più aggiornato tramite sharedState
+    // Usiamo una callback per accedere allo stato più recente
+    setLoading(false); // dummy state read to force re-render closure
+    // Timeout: fine round per questa squadra
+    const timeoutCallback = () => {
+      // Viene eseguito nel prossimo ciclo, sharedState sarà aggiornato
+    };
+    // Emettiamo subito con i dati che abbiamo
+    emitTimeoutEvent();
+  };
+
+  // Ref che tiene sempre l'ultimo sharedState per timeOut
+  const sharedStateRef = React.useRef(sharedState);
+  sharedStateRef.current = sharedState;
+
+  const emitTimeoutEvent = () => {
+    const latest = sharedStateRef.current;
+    const result: DuelloTeamResult = {
+      teamId: latest.activeTeamId!,
+      teamName: teams?.find(t => t.id === latest.activeTeamId)?.name || 'Squadra',
+      teamColor: teams?.find(t => t.id === latest.activeTeamId)?.color || 'bg-retro-pink',
+      wordsFound: latest.wordsFoundThisRound ?? 0,
+      timeUsed: 120,
+      completed: false,
+    };
+    const newResults = [...(latest.teamResults || []), result];
+    const nextQueueIdx = (latest.currentTeamQueueIndex ?? 0) + 1;
+    const nextPhase = nextQueueIdx < (latest.teamsQueue || []).length ? 'teamSelect' : 'finalResults';
+    emitUpdate({
+      gameData: {
+        ...latest,
+        isActive: false,
+        phase: nextPhase,
+        teamResults: newResults,
+        currentTeamQueueIndex: nextQueueIdx,
+        wordRevealed: false,
+      }
+    });
+  };
+
+  const getInitialLetters = (word: string): number[] => {
+    const w = word.toUpperCase();
+    if (w.length <= 2) return [0];
+    const revealed: number[] = [];
+    for (let i = 0; i < w.length; i++) {
+      if (w[i] !== ' ') { revealed.push(i); break; }
+    }
+    for (let i = w.length - 1; i >= 0; i--) {
+      if (w[i] !== ' ' && !revealed.includes(i)) { revealed.push(i); break; }
+    }
+    return revealed;
+  };
 
   const generateWords = async () => {
     if (role !== 'regia') return;
@@ -808,18 +884,17 @@ function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia
       const allTeamIds = teams?.map(t => t.id) || [];
       emitUpdate({
         gameData: {
-          ...sharedState,
           duelloWords: data,
           currentWordIndex: 0,
           revealedLetters: getInitialLetters(data[0]?.word || ''),
           wordRevealed: false,
-          timer: 120,
           isActive: false,
           phase: 'teamSelect',
           teamResults: [],
           teamsQueue: allTeamIds,
           currentTeamQueueIndex: 0,
           activeTeamId: null,
+          wordsFoundThisRound: 0,
         }
       });
     } catch (e) {
@@ -829,97 +904,95 @@ function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia
     }
   };
 
-  const getInitialLetters = (word: string): number[] => {
-    const w = word.toUpperCase();
-    if (w.length <= 2) return [0];
-    // Prima e ultima lettera (ignora spazi)
-    const revealed: number[] = [];
-    // Prima lettera non-spazio
-    for (let i = 0; i < w.length; i++) {
-      if (w[i] !== ' ') { revealed.push(i); break; }
-    }
-    // Ultima lettera non-spazio  
-    for (let i = w.length - 1; i >= 0; i--) {
-      if (w[i] !== ' ' && !revealed.includes(i)) { revealed.push(i); break; }
-    }
-    return revealed;
-  };
-
   const startTeamRound = (teamId: number) => {
     if (role !== 'regia') return;
     emitUpdate({
       gameData: {
-        ...sharedState,
+        ...sharedStateRef.current,
         activeTeamId: teamId,
         currentWordIndex: 0,
         revealedLetters: getInitialLetters(words[0]?.word || ''),
         wordRevealed: false,
-        timer: 120,
         isActive: true,
         phase: 'playing',
+        wordsFoundThisRound: 0,
       }
     });
   };
 
   const revealNextLetter = () => {
-    if (role !== 'regia' || wordRevealed) return;
-    const word = (words[currentWordIndex]?.word || '').toUpperCase();
+    const latest = sharedStateRef.current;
+    if (role !== 'regia' || latest.wordRevealed) return;
+    const word = (words[latest.currentWordIndex]?.word || '').toUpperCase();
     const unrevealed: number[] = [];
     for (let i = 0; i < word.length; i++) {
-      if (word[i] !== ' ' && !revealedLetters.includes(i)) unrevealed.push(i);
+      if (word[i] !== ' ' && !(latest.revealedLetters || []).includes(i)) {
+        unrevealed.push(i);
+      }
     }
     if (unrevealed.length > 0) {
       const pick = unrevealed[Math.floor(Math.random() * unrevealed.length)];
-      const newTimer = Math.max(0, timer - 2);
+      // Penalità: -2 secondi sul timer locale (non via socket)
+      localTimerRef.current = Math.max(0, localTimerRef.current - 2);
+      setLocalTimer(localTimerRef.current);
       emitUpdate({
         gameData: {
-          ...sharedState,
-          revealedLetters: [...revealedLetters, pick],
-          timer: newTimer,
+          ...latest,
+          revealedLetters: [...(latest.revealedLetters || []), pick],
         }
       });
     }
   };
 
+  // RISPOSTA ESATTA: invia stato completo con wordRevealed:true
+  // Il timer si ferma lato UI immediatamente (via wordRevealed → useEffect)
   const markFound = () => {
-    // Regia pressa: il giocatore ha detto la risposta corretta. Rivela la parola intera.
     if (role !== 'regia') return;
-    emitUpdate({ gameData: { ...sharedState, wordRevealed: true } });
+    const latest = sharedStateRef.current;
+    clearInterval(timerRef.current); // ferma subito il timer locale
+    emitUpdate({
+      gameData: {
+        ...latest,
+        wordRevealed: true,
+      }
+    });
   };
 
   const nextWord = (found: boolean) => {
     if (role !== 'regia') return;
-    const nextIdx = currentWordIndex + 1;
+    const latest = sharedStateRef.current;
+    const nextIdx = latest.currentWordIndex + 1;
+    const wordsFoundSoFar = found
+      ? (latest.wordsFoundThisRound ?? 0) + 1
+      : (latest.wordsFoundThisRound ?? 0);
+
     if (nextIdx >= words.length) {
-      // Ha finito tutte le parole!
-      const timeUsed = 120 - timer;
+      const timeUsed = 120 - localTimerRef.current;
       const newResult: DuelloTeamResult = {
-        teamId: activeTeamId!,
-        teamName: teams?.find(t => t.id === activeTeamId)?.name || 'Squadra',
-        teamColor: teams?.find(t => t.id === activeTeamId)?.color || 'bg-retro-pink',
-        wordsFound: found ? nextIdx : currentWordIndex,
+        teamId: latest.activeTeamId!,
+        teamName: teams?.find(t => t.id === latest.activeTeamId)?.name || 'Squadra',
+        teamColor: teams?.find(t => t.id === latest.activeTeamId)?.color || 'bg-retro-pink',
+        wordsFound: wordsFoundSoFar,
         timeUsed,
         completed: true,
       };
-      const newResults = [...teamResults, newResult];
-      const nextQueueIdx = currentTeamQueueIndex + 1;
-      const nextPhase = nextQueueIdx < teamsQueue.length ? 'teamSelect' : 'finalResults';
+      const newResults = [...(latest.teamResults || []), newResult];
+      const nextQueueIdx = (latest.currentTeamQueueIndex ?? 0) + 1;
+      const nextPhase = nextQueueIdx < (latest.teamsQueue || []).length ? 'teamSelect' : 'finalResults';
       emitUpdate({
         gameData: {
-          ...sharedState,
+          ...latest,
           isActive: false,
           phase: nextPhase,
           teamResults: newResults,
           currentTeamQueueIndex: nextQueueIdx,
-          wordsFoundThisRound: found ? nextIdx : currentWordIndex,
+          wordRevealed: false,
         }
       });
     } else {
-      // Aggiorna contatore parole trovate nel round corrente e vai alla prossima
-      const wordsFoundSoFar = found ? currentWordIndex + 1 : currentWordIndex;
       emitUpdate({
         gameData: {
-          ...sharedState,
+          ...latest,
           currentWordIndex: nextIdx,
           revealedLetters: getInitialLetters(words[nextIdx]?.word || ''),
           wordRevealed: false,
@@ -931,10 +1004,20 @@ function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia
 
   const resetGame = () => {
     if (role !== 'regia') return;
-    emitUpdate({ gameData: { ...sharedState, phase: 'setup', duelloWords: [], teamResults: [] } });
+    emitUpdate({
+      gameData: {
+        phase: 'setup',
+        duelloWords: [],
+        teamResults: [],
+        wordRevealed: false,
+        isActive: false,
+        currentWordIndex: 0,
+        wordsFoundThisRound: 0,
+      }
+    });
   };
 
-  if (loading) return <LoadingState text="Il Duello si prepara... generazione parole in corso" />;
+  if (loading) return <LoadingState text="Duellos si prepara... generazione parole in corso" />;
 
   // ── FASE SETUP ──
   if (phase === 'setup') {
@@ -946,7 +1029,7 @@ function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia
           className="mb-10"
         >
           <Swords className="w-20 h-20 text-retro-pink mx-auto mb-4 drop-shadow-[0_0_20px_rgba(255,0,255,0.8)]" />
-          <h2 className="text-6xl font-retro retro-title uppercase mb-3">Il Duello</h2>
+          <h2 className="text-6xl font-retro retro-title uppercase mb-3">Duellos</h2>
           <p className="text-retro-cyan font-pixel text-[11px] uppercase tracking-[0.25em] leading-loose max-w-sm mx-auto">
             Ogni squadra gioca a turno.<br />
             La regia rivela lettere, il concorrente indovina.<br />
@@ -983,7 +1066,7 @@ function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia
     return (
       <div className="max-w-2xl w-full">
         <div className="text-center mb-10">
-          <span className="text-xs font-pixel text-retro-pink uppercase tracking-[0.3em] block mb-2">IL DUELLO</span>
+          <span className="text-xs font-pixel text-retro-pink uppercase tracking-[0.3em] block mb-2">DUELLOS</span>
           <h2 className="text-5xl font-retro retro-title uppercase mb-2">È il tuo turno!</h2>
           {nextTeam && (
             <div className={`inline-block mt-4 px-8 py-3 border-4 text-3xl font-retro uppercase ${
@@ -1042,17 +1125,17 @@ function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia
     const allRevealed = revealedNonSpace >= totalNonSpace;
     const activeTeam = teams?.find(t => t.id === activeTeamId);
     const wordsFoundSoFar: number = sharedState.wordsFoundThisRound ?? 0;
-    const minutes = Math.floor(timer / 60);
-    const seconds = timer % 60;
+    const minutes = Math.floor(localTimer / 60);
+    const seconds = localTimer % 60;
     const timerStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-    const timerPct = (timer / 120) * 100;
+    const timerPct = (localTimer / 120) * 100;
 
     return (
       <div className="max-w-3xl w-full">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <span className="text-[10px] font-pixel text-retro-pink uppercase tracking-widest block">IL DUELLO</span>
+            <span className="text-[10px] font-pixel text-retro-pink uppercase tracking-widest block">DUELLOS</span>
             {activeTeam && (
               <span className={`text-xl font-retro uppercase ${
                 activeTeam.color === 'bg-retro-pink' ? 'text-retro-pink' :
@@ -1063,14 +1146,14 @@ function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia
           </div>
           <div className="text-center">
             <div className={`text-5xl font-retro tabular-nums ${
-              timer <= 10 ? 'text-red-500 animate-pulse' :
-              timer <= 30 ? 'text-retro-yellow' : 'text-white'
+              localTimer <= 10 ? 'text-red-500 animate-pulse' :
+              localTimer <= 30 ? 'text-retro-yellow' : 'text-white'
             }`}>{timerStr}</div>
             <div className="w-48 h-2 bg-black/40 border border-white/10 mt-1 mx-auto overflow-hidden">
               <motion.div
                 className={`h-full ${
-                  timer <= 10 ? 'bg-red-500' :
-                  timer <= 30 ? 'bg-retro-yellow' : 'bg-retro-cyan'
+                  localTimer <= 10 ? 'bg-red-500' :
+                  localTimer <= 30 ? 'bg-retro-yellow' : 'bg-retro-cyan'
                 }`}
                 animate={{ width: `${timerPct}%` }}
                 transition={{ duration: 0.5 }}
@@ -1150,7 +1233,7 @@ function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia
         {/* Controlli Regia */}
         {role === 'regia' && (
           <div className="flex flex-col gap-3">
-            {!wordRevealed && (
+            {!wordRevealed ? (
               <div className="flex gap-3">
                 <motion.button
                   whileHover={{ scale: 1.03 }}
@@ -1174,28 +1257,31 @@ function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia
                   </span>
                 </motion.button>
               </div>
+            ) : (
+              <motion.button
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                whileHover={{ scale: 1.03 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => nextWord(true)}
+                className="retro-btn w-full py-6 text-2xl bg-retro-pink shadow-[0_0_20px_rgba(255,0,255,0.4)]"
+              >
+                PROSSIMA PAROLA →
+              </motion.button>
             )}
-            <div className="flex gap-3">
-              {wordRevealed ? (
-                <motion.button
-                  whileHover={{ scale: 1.03 }}
-                  whileTap={{ scale: 0.97 }}
-                  onClick={() => nextWord(true)}
-                  className="retro-btn flex-1 py-4 text-xl bg-retro-pink"
-                >
-                  PAROLA SUCCESSIVA →
-                </motion.button>
-              ) : (
+            
+            {!wordRevealed && (
+              <div className="flex justify-center mt-2">
                 <motion.button
                   whileHover={{ scale: 1.03 }}
                   whileTap={{ scale: 0.97 }}
                   onClick={() => nextWord(false)}
-                  className="retro-btn flex-1 py-4 text-lg bg-white/10 border border-white/20"
+                  className="retro-btn w-full py-3 text-sm bg-white/5 text-white/40 hover:bg-white/10 hover:text-white"
                 >
-                  SALTA →
+                  SALTA PAROLA →
                 </motion.button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1221,7 +1307,7 @@ function MemoriaStorica({ role, sharedState, emitUpdate, teams }: { role: 'regia
       <div className="max-w-2xl w-full text-center">
         <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.5 }}>
           <Trophy className="w-24 h-24 text-retro-yellow mx-auto mb-4 drop-shadow-[0_0_30px_rgba(255,255,0,0.8)] animate-bounce" />
-          <h2 className="text-6xl font-retro retro-title uppercase mb-2">Duello Finito!</h2>
+          <h2 className="text-6xl font-retro retro-title uppercase mb-2">Duellos Finito!</h2>
           {winner && (
             <p className={`text-3xl font-retro mt-4 uppercase ${
               winner.teamColor === 'bg-retro-pink' ? 'text-retro-pink' :

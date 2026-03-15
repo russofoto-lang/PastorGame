@@ -3,21 +3,25 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import fs from "fs";
+
+function logToFile(msg: string) {
+  const timestamp = new Date().toISOString();
+  fs.appendFileSync(path.join(process.cwd(), "server.log"), `[${timestamp}] ${msg}\n`);
+  console.log(msg);
+}
 
 async function startServer() {
   const app = express();
   app.use(express.json());
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
-    cors: {
-      origin: "*",
-    },
+    cors: { origin: "*" },
   });
 
   const PORT = 3000;
 
-  // Stato del gioco condiviso
-  let gameState = {
+  let gameState: any = {
     mode: 'home',
     teams: [
       { id: 1, name: 'Team A', score: 0, color: 'bg-retro-pink' },
@@ -30,24 +34,38 @@ async function startServer() {
       selectedOption: null,
       topic: '',
       questions: [],
-      // Altri dati specifici per i giochi
     }
   };
 
   io.on("connection", (socket) => {
-    console.log("User connected:", socket.id);
-    
-    // Invia lo stato attuale al nuovo connesso
+    logToFile(`User connected: ${socket.id}`);
     socket.emit("stateUpdate", gameState);
 
-    // Gestione aggiornamenti dalla Regia
-    socket.on("updateState", (newState) => {
-      gameState = { ...gameState, ...newState };
+    socket.on("updateState", (newState: any) => {
+      // Il timer NON viaggia più via socket (gestito localmente nel client Duellos),
+      // quindi non esistono più race condition sul timer.
+      // Ogni update dal client include sempre gameData completo con spread,
+      // quindi il merge shallow è sufficiente e sicuro.
+      if (newState.gameData) {
+        gameState.gameData = { ...gameState.gameData, ...newState.gameData };
+      }
+
+      // Merge del resto (mode, teams, ecc.)
+      const { gameData, ...restState } = newState;
+      gameState = { ...gameState, ...restState };
+
+      logToFile(
+        `[SERVER] stateUpdate → mode=${gameState.mode} ` +
+        `phase=${gameState.gameData?.phase} ` +
+        `wordIdx=${gameState.gameData?.currentWordIndex} ` +
+        `wordRevealed=${gameState.gameData?.wordRevealed}`
+      );
+
       io.emit("stateUpdate", gameState);
     });
 
     socket.on("disconnect", () => {
-      console.log("User disconnected");
+      logToFile("User disconnected");
     });
   });
 
@@ -78,7 +96,7 @@ async function startServer() {
 
       const data = await response.json();
       if (data.error) throw new Error(data.error.message);
-      
+
       res.json({ text: data.content[0].text });
     } catch (error: any) {
       console.error("Claude API Error:", error);
@@ -95,7 +113,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
