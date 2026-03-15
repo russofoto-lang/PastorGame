@@ -787,8 +787,8 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
   const prevPhaseRef = React.useRef(phase);
   useEffect(() => {
     if (prevPhaseRef.current !== 'playing' && phase === 'playing') {
-      localTimerRef.current = 120;
-      setLocalTimer(120);
+      localTimerRef.current = 60;
+      setLocalTimer(60);
     }
     prevPhaseRef.current = phase;
   }, [phase]);
@@ -847,7 +847,7 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
       teamName: teams?.find(t => t.id === latest.activeTeamId)?.name || 'Squadra',
       teamColor: teams?.find(t => t.id === latest.activeTeamId)?.color || 'bg-retro-pink',
       wordsFound: latest.wordsFoundThisRound ?? 0,
-      timeUsed: 120,
+      timeUsed: 60,
       completed: false,
     };
     const newResults = [...(latest.teamResults || []), result];
@@ -1138,7 +1138,7 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
     const minutes = Math.floor(localTimer / 60);
     const seconds = localTimer % 60;
     const timerStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-    const timerPct = (localTimer / 120) * 100;
+    const timerPct = (localTimer / 60) * 100;
 
     return (
       <div className="max-w-3xl w-full">
