@@ -757,7 +757,13 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
   const [loading, setLoading] = useState(false);
 
   // ── STATO DAL SERVER (solo dati discreti, MAI il timer) ──
-  const words: { word: string; definition: string }[] = sharedState.duelloWords || [];
+  // Durante il round attivo usa le parole del set della squadra corrente,
+  // altrimenti usa il set della prima squadra (per conteggi nella UI di teamSelect)
+  const wordsSets: { [teamId: number]: { word: string; definition: string }[] } = sharedState.wordsSets || {};
+  const activeSetWords = sharedState.activeTeamId != null ? (wordsSets[sharedState.activeTeamId] || []) : [];
+  const words: { word: string; definition: string }[] = activeSetWords.length > 0
+    ? activeSetWords
+    : (Object.values(wordsSets)[0] as any || []);
   const currentWordIndex: number = sharedState.currentWordIndex ?? 0;
   const revealedLetters: number[] = sharedState.revealedLetters || [];
   const wordRevealed: boolean = sharedState.wordRevealed || false;
@@ -876,13 +882,17 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
     if (role !== 'regia') return;
     setLoading(true);
     try {
-      const data = await geminiService.generateDuelloWords();
       const allTeamIds = teams?.map(t => t.id) || [];
+      // Genera un set di parole DIVERSO per ogni squadra (in parallelo)
+      const allSets = await Promise.all(allTeamIds.map(() => geminiService.generateDuelloWords()));
+      const wordsSets: { [teamId: number]: { word: string; definition: string }[] } = {};
+      allTeamIds.forEach((id, i) => { wordsSets[id] = allSets[i]; });
       emitUpdate({
         gameData: {
-          duelloWords: data,
+          wordsSets,
+          duelloWords: [], // legacy, non usato
           currentWordIndex: 0,
-          revealedLetters: getInitialLetters(data[0]?.word || ''),
+          revealedLetters: [],
           wordRevealed: false,
           isActive: false,
           phase: 'teamSelect',
@@ -902,12 +912,14 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
 
   const startTeamRound = (teamId: number) => {
     if (role !== 'regia') return;
+    const latest = sharedStateRef.current;
+    const teamWords = (latest.wordsSets || {})[teamId] || [];
     emitUpdate({
       gameData: {
-        ...sharedStateRef.current,
+        ...latest,
         activeTeamId: teamId,
         currentWordIndex: 0,
-        revealedLetters: getInitialLetters(words[0]?.word || ''),
+        revealedLetters: getInitialLetters(teamWords[0]?.word || ''),
         wordRevealed: false,
         isActive: true,
         phase: 'playing',
@@ -1004,16 +1016,18 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
       gameData: {
         phase: 'setup',
         duelloWords: [],
+        wordsSets: {},
         teamResults: [],
         wordRevealed: false,
         isActive: false,
         currentWordIndex: 0,
         wordsFoundThisRound: 0,
+        activeTeamId: null,
       }
     });
   };
 
-  if (loading) return <LoadingState text="Duellos si prepara... generazione parole in corso" />;
+  if (loading) return <LoadingState text="Duellos genera 3 set di parole diversi..." />;
 
   // ── FASE SETUP ──
   if (phase === 'setup') {
