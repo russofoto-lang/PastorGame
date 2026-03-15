@@ -11,7 +11,9 @@ async function callClaude(prompt: string, system?: string) {
     });
     const data = await response.json();
     if (data.error) throw new Error(data.error);
-    return data.text;
+    // Rimuove i backtick markdown che Claude aggiunge a volte
+    const text = (data.text || '').replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    return text;
   } catch (error) {
     console.error("Claude fallback error:", error);
     throw error;
