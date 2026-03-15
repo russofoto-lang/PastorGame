@@ -1486,7 +1486,7 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
           syncedTimer: 90,
         }
       });
-      setLoading(false);
+      
       // Precarica round 2 e 3 in background mentre si gioca
       geminiService.generateTimelineEvents(CATEGORY, roundConfig[1])
         .then(d => setPreloadedEvents(prev => ({ ...prev, 2: d })))
