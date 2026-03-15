@@ -777,6 +777,13 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
   // Il timer è solo UI. Viene resettato a 120 quando arriva phase='playing' dal server.
   // Quando scade, la regia invia la fine del round via socket (un singolo evento discreto).
   const [localTimer, setLocalTimer] = useState(120);
+  
+    // Pubblico e Display leggono il timer sincronizzato dalla regia via socket
+    useEffect(() => {
+      if (role !== 'regia' && sharedState.syncedTimer != null) {
+        setLocalTimer(sharedState.syncedTimer);
+      }
+    }, [sharedState.syncedTimer]);
   const timerRef = React.useRef<any>(null);
   const localTimerRef = React.useRef(120);
   const wordRevealedRef = React.useRef(false);
