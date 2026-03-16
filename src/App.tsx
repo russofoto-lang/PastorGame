@@ -187,43 +187,43 @@ export default function App() {
             {role === 'regia' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <GameCard 
-                  title="Sfida al Genio"
+                  title="1 · Chi È?"
+                  description="Indovina il personaggio famoso dalla foto sfocata. Buzzer per rispondere!"
+                  icon={<User className="w-8 h-8" />}
+                  onClick={() => changeMode('chie')}
+                  color="bg-green-500"
+                />
+                <GameCard 
+                  title="2 · Timeline"
+                  description="Metti in ordine 3 round di eventi storici. 30 secondi in totale!"
+                  icon={<Timer className="w-8 h-8" />}
+                  onClick={() => changeMode('timeline')}
+                  color="bg-retro-cyan"
+                />
+                <GameCard 
+                  title="3 · Duellos"
+                  description="Indovina le parole nascoste prima che scada il minuto!"
+                  icon={<Swords className="w-8 h-8" />}
+                  onClick={() => changeMode('duellos')}
+                  color="bg-retro-pink"
+                />
+                <GameCard 
+                  title="4 · Sfida al Genio"
                   description="Metti in difficoltà l'esperto del gruppo con domande impossibili."
                   icon={<Brain className="w-8 h-8" />}
                   onClick={() => changeMode('genio')}
                   color="bg-retro-purple"
                 />
                 <GameCard 
-                  title="Duellos"
-                  description="Un concorrente alla volta. Indovina la parola nascosta prima che il tempo scada!"
-                  icon={<Swords className="w-8 h-8" />}
-                  onClick={() => changeMode('duellos')}
-                  color="bg-retro-pink"
-                />
-                <GameCard 
-                  title="Timeline"
-                  description="Riordina 5 eventi storici dal più antico al più recente."
-                  icon={<Timer className="w-8 h-8" />}
-                  onClick={() => changeMode('timeline')}
-                  color="bg-retro-cyan"
-                />
-                <GameCard 
-                  title="Chi È?"
-                  description="Indovina il personaggio famoso dalla foto sfocata che si rivela gradualmente."
-                  icon={<User className="w-8 h-8" />}
-                  onClick={() => changeMode('chie')}
-                  color="bg-green-500"
-                />
-                <GameCard 
-                  title="Il Ring"
-                  description="Scontro 1 vs 1 a ritmo serrato su temi geografici e non solo."
+                  title="5 · Il Ring"
+                  description="Tutti contro tutti! Dici un nome, passa il turno. Chi finisce il tempo è fuori."
                   icon={<Swords className="w-8 h-8" />}
                   onClick={() => changeMode('ring')}
                   color="bg-retro-yellow"
                 />
                 <GameCard 
-                  title="La Ghigliottina"
-                  description="Gioco finale! 5 parole indizio, trova la parola che le lega tutte."
+                  title="🏆 La Ghigliottina"
+                  description="GIOCO FINALE! 5 parole indizio, trova la parola che le lega tutte."
                   icon={<Zap className="w-8 h-8" />}
                   onClick={() => changeMode('ghigliottina')}
                   color="bg-retro-purple"
@@ -1904,6 +1904,23 @@ function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' 
   const continueAfterElimination = () => {
     if (role !== 'regia') return;
     emitUpdate({ gameData: { ...sharedStateRef.current, isActive: true, phase: 'playing' } });
+  };
+
+  const newCategory = async () => {
+    if (role !== 'regia') return;
+    setLoading(true);
+    try {
+      const t = await geminiService.generateRingTheme();
+      emitUpdate({
+        gameData: {
+          ...sharedStateRef.current,
+          theme: t,
+          currentPlayerIdx: 0,
+          isActive: false,
+        }
+      });
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   };
 
   const resetGame = () => {
