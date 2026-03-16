@@ -802,7 +802,7 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
   const prevPhaseRef = React.useRef(phase);
   useEffect(() => {
     if (prevPhaseRef.current !== 'playing' && phase === 'playing') {
-      localTimerRef.current = 60;
+      localTimerRef.current = 30;
       setLocalTimer(60);
     }
     prevPhaseRef.current = phase;
@@ -1481,8 +1481,8 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
   const result = sharedState.result || null;
 
   // ── TIMER LOCALE ──
-  const [localTimer, setLocalTimer] = useState(60);
-  const localTimerRef = React.useRef(60);
+  const [localTimer, setLocalTimer] = useState(30);
+  const localTimerRef = React.useRef(30);
   const timerRef = React.useRef<any>(null);
   const sharedStateRef = React.useRef(sharedState);
   sharedStateRef.current = sharedState;
@@ -2707,7 +2707,7 @@ Rispondi SOLO in JSON: {"parolaSegreta": "FERRO", "parole": ["STIRO", "CAVALLO",
           ghigTimerActive: false,
           ghigResult: null,
           ghigWinnerTeamId: null,
-          ghigSyncedTimer: 60,
+          ghigSyncedTimer: 30,
         }
       });
     } catch (e) { console.error(e); }
@@ -2722,7 +2722,7 @@ Rispondi SOLO in JSON: {"parolaSegreta": "FERRO", "parole": ["STIRO", "CAVALLO",
   const startTimer = () => {
     if (role !== 'regia') return;
     localTimerRef.current = 60;
-    setLocalTimer(60);
+    setLocalTimer(30);
     emitUpdate({ gameData: { ...sharedStateRef.current, ghigTimerActive: true, ghigSyncedTimer: 60 } });
   };
 
@@ -2827,18 +2827,19 @@ Rispondi SOLO in JSON: {"parolaSegreta": "FERRO", "parole": ["STIRO", "CAVALLO",
             <span className="text-6xl font-retro text-retro-yellow uppercase">{parolaSegreta}</span>
           </div>
           {/* Parole indizio con la parola segreta */}
-          <div className="grid grid-cols-5 gap-2 mb-6">
-            {paroleIndizio.map((p, i) => (
-              <div key={i} className="bg-[#000044] border border-retro-yellow/30 p-2 text-center">
-                <p className="font-retro text-retro-yellow text-sm uppercase leading-tight">{p}</p>
-                <p className="font-pixel text-[8px] text-white/30 mt-1 uppercase">→ {parolaSegreta}</p>
-              </div>
-            ))}
-          </div>
-          {spiegazione && (
-            <p className="text-retro-cyan font-mono text-sm uppercase mb-6 bg-black/40 p-3 border border-retro-cyan/20">{spiegazione}</p>
+         {role === 'regia' && (
+            <div className="grid grid-cols-5 gap-2 mb-6">
+              {paroleIndizio.map((p, i) => (
+                <div key={i} className="bg-[#000044] border border-retro-yellow/30 p-2 text-center">
+                  <p className="font-retro text-retro-yellow text-sm uppercase leading-tight">{p}</p>
+                  <p className="font-pixel text-[8px] text-white/30 mt-1 uppercase">→ {parolaSegreta}</p>
+                </div>
+              ))}
+            </div>
           )}
-        </motion.div>
+          {spiegazione && role === 'regia' && (
+            <p className="text-retro-cyan font-mono text-sm uppercase mb-6 bg-black/40 p-3 border border-retro-cyan/20">{spiegazione}</p>
+          )}        </motion.div>
         {role === 'regia' && (
           <div className="flex gap-3">
             <button onClick={generateGame} className="retro-btn flex-1 py-3 text-base" style={{ background: '#a855f7' }}>
