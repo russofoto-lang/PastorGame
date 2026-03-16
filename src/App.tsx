@@ -2643,9 +2643,9 @@ function LaGhigliottina({ role, sharedState, emitUpdate, teams }: {
   const sharedStateRef = React.useRef(sharedState);
   sharedStateRef.current = sharedState;
 
-  // Timer locale 60 secondi
-  const [localTimer, setLocalTimer] = useState(60);
-  const localTimerRef = React.useRef(60);
+  // Timer locale 30 secondi
+  const [localTimer, setLocalTimer] = useState(30);
+  const localTimerRef = React.useRef(30);
   const timerRef = React.useRef<any>(null);
 
   useEffect(() => {
@@ -2694,8 +2694,8 @@ Rispondi SOLO in JSON: {"parolaSegreta": "FERRO", "parole": ["STIRO", "CAVALLO",
       const text = (data.text || '').replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
       const parsed = JSON.parse(text);
 
-      localTimerRef.current = 60;
-      setLocalTimer(60);
+      localTimerRef.current = 30;
+      setLocalTimer(30);
       emitUpdate({
         gameData: {
           ...sharedStateRef.current,
@@ -2721,9 +2721,9 @@ Rispondi SOLO in JSON: {"parolaSegreta": "FERRO", "parole": ["STIRO", "CAVALLO",
 
   const startTimer = () => {
     if (role !== 'regia') return;
-    localTimerRef.current = 60;
+    localTimerRef.current = 30;
     setLocalTimer(30);
-    emitUpdate({ gameData: { ...sharedStateRef.current, ghigTimerActive: true, ghigSyncedTimer: 60 } });
+    emitUpdate({ gameData: { ...sharedStateRef.current, ghigTimerActive: true, ghigSyncedTimer: 30 } });
   };
 
   const markCorrect = () => {
