@@ -1757,7 +1757,7 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
       <History className="w-16 h-16 text-retro-cyan mx-auto mb-6" />
       <h2 className="text-5xl font-retro retro-title uppercase mb-4">TIMELINE</h2>
       <p className="text-retro-cyan font-mono text-sm mb-10 uppercase leading-tight tracking-widest">
-        METTI IN ORDINE GLI EVENTI. 3 ROUND (3, 5, 7 EVENTI). HAI 60 SECONDI!
+        METTI IN ORDINE GLI EVENTI. 3 ROUND (3, 5, 7 EVENTI). HAI 30 SECONDI!
       </p>
       {role === 'regia' ? (
         <button onClick={startGame} className="retro-btn w-full text-lg py-3 bg-retro-cyan flex items-center justify-center gap-3">
