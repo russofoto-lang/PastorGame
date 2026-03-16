@@ -1020,6 +1020,23 @@ if (localTimerRef.current <= 0) {
     }
   };
 
+  const newCategory = async () => {
+    if (role !== 'regia') return;
+    setLoading(true);
+    try {
+      const t = await geminiService.generateRingTheme();
+      emitUpdate({
+        gameData: {
+          ...sharedStateRef.current,
+          theme: t,
+          currentPlayerIdx: 0,
+          isActive: false,
+        }
+      });
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  };
+
   const resetGame = () => {
     if (role !== 'regia') return;
     emitUpdate({
@@ -2049,11 +2066,14 @@ function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' 
               </button>
             </div>
           )}
-          <div className="flex gap-2">
-            <button onClick={() => emitUpdate({ gameData: { ...sharedStateRef.current, isActive: false, phase: 'winner' } })} className="retro-btn flex-1 py-2 bg-retro-pink text-black text-sm">
-              🏆 FINE GIOCO
+          <div className="flex gap-2 mt-1">
+            <button onClick={newCategory} className="retro-btn flex-1 py-2 bg-retro-cyan text-black text-sm">
+              🔄 NUOVA CAT.
             </button>
-            <button onClick={resetGame} className="retro-btn px-4 py-2 bg-white/5 border border-white/10 text-sm text-white/40">
+            <button onClick={() => emitUpdate({ gameData: { ...sharedStateRef.current, isActive: false, phase: 'winner' } })} className="retro-btn flex-1 py-2 bg-retro-pink text-black text-sm">
+              🏆 FINE
+            </button>
+            <button onClick={resetGame} className="retro-btn px-3 py-2 bg-white/5 border border-white/10 text-sm text-white/40">
               <RotateCcw className="w-3 h-3" />
             </button>
           </div>
