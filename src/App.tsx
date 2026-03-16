@@ -323,12 +323,12 @@ export default function App() {
                 {role === 'pubblico' && selectedTeamId !== null && (() => {
                   const myTeam = teams.find(t => t.id === selectedTeamId);
                   return myTeam ? (
-                    <div className={`px-2 py-1 font-pixel text-[8px] uppercase tracking-widest border ${
-                      myTeam.color === 'bg-retro-pink' ? 'border-retro-pink text-retro-pink' :
-                      myTeam.color === 'bg-retro-cyan' ? 'border-retro-cyan text-retro-cyan' :
-                      'border-retro-yellow text-retro-yellow'
+                    <div className={`px-3 py-1.5 font-retro text-sm uppercase tracking-widest border-2 shadow-[0_0_10px_rgba(255,255,255,0.2)] ${
+                      myTeam.color === 'bg-retro-pink' ? 'border-retro-pink text-retro-pink bg-retro-pink/20 shadow-[0_0_15px_rgba(255,0,255,0.4)]' :
+                      myTeam.color === 'bg-retro-cyan' ? 'border-retro-cyan text-retro-cyan bg-retro-cyan/20 shadow-[0_0_15px_rgba(0,255,255,0.4)]' :
+                      'border-retro-yellow text-retro-yellow bg-retro-yellow/20 shadow-[0_0_15px_rgba(255,255,0,0.4)]'
                     }`}>
-                      {myTeam.name}
+                      👤 {myTeam.name}
                     </div>
                   ) : null;
                 })()}
