@@ -2385,7 +2385,7 @@ function ChiE({ role, sharedState, emitUpdate, selectedTeamId, teams }: {
                     >
                       <CheckCircle2 className="w-4 h-4" /> RIVELA RISPOSTA
                     </button>
-                    {allTeamsWrong && (
+                    {buzzerWrong.length > 0 && (
                       <button
                         onClick={() => emitUpdate({ gameData: { ...sharedStateRef.current, buzzerWrong: [] } })}
                         className="retro-btn py-2 bg-retro-purple text-white text-sm flex items-center justify-center gap-2"
