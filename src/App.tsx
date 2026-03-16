@@ -1780,34 +1780,15 @@ function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' 
   const handleTimeOut = () => {
     const latest = sharedStateRef.current;
     const ap = latest.activePlayers || [];
-    const idx = latest.currentPlayerIdx ?? 0;
-    const eliminatedTeamId = ap[idx];
-    const newEliminated = [...(latest.eliminated || []), eliminatedTeamId];
-    const newActive = ap.filter((id: number) => id !== eliminatedTeamId);
-
-    if (newActive.length <= 1) {
-      emitUpdate({
-        gameData: {
-          ...latest,
-          isActive: false,
-          phase: 'winner',
-          activePlayers: newActive,
-          eliminated: newEliminated,
-        }
-      });
-    } else {
-      const nextIdx = idx >= newActive.length ? 0 : idx;
-      emitUpdate({
-        gameData: {
-          ...latest,
-          isActive: false,
-          phase: 'eliminated',
-          activePlayers: newActive,
-          eliminated: newEliminated,
-          currentPlayerIdx: nextIdx,
-        }
-      });
-    }
+    const nextIdx = ((latest.currentPlayerIdx ?? 0) + 1) % ap.length;
+    emitUpdate({
+      gameData: {
+        ...latest,
+        isActive: true,
+        phase: 'playing',
+        currentPlayerIdx: nextIdx,
+      }
+    });
   };
 
   const startGame = async () => {
@@ -1951,28 +1932,25 @@ function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' 
 
   // ── VINCITORE ──
   if (phase === 'winner') {
-    const allTeamIds = [...activePlayers, ...eliminated];
+    const allTeamIds = [...activePlayers];
     const sorted = [...allTeamIds].sort((a, b) => (wordCounts[b] ?? 0) - (wordCounts[a] ?? 0));
     const winnerTeam = activePlayers[0] != null ? teamColor(activePlayers[0]) : null;
     return (
       <div className="max-w-md w-full text-center">
         <Trophy className="w-20 h-20 text-retro-yellow mx-auto mb-6 animate-bounce" />
         <h2 className="text-5xl font-retro retro-title uppercase mb-2">VINCITORE!</h2>
-        {winnerTeam && (
-          <div className={`text-4xl font-retro uppercase mt-2 mb-6 ${winnerTeam.text}`}>{winnerTeam.name}</div>
-        )}
+        <p className="text-retro-cyan font-pixel text-sm uppercase mb-6">Classifica finale parole</p>
         {/* Classifica parole */}
         <div className="bg-black/40 border border-white/10 p-4 mb-6">
           <span className="text-[10px] font-pixel text-retro-yellow uppercase tracking-widest block mb-3">CLASSIFICA PAROLE</span>
           {sorted.map((tid, i) => {
             const tc = teamColor(tid);
-            const isElim = eliminated.includes(tid);
             return (
-              <div key={tid} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
-                <span className={`font-pixel text-[10px] uppercase ${isElim ? 'line-through opacity-40' : tc.text}`}>
-                  {i + 1}. {tc.name} {isElim ? '(elim.)' : ''}
-                </span>
-                <span className={`font-retro text-2xl ${isElim ? 'text-white/30' : 'text-white'}`}>
+                <div key={tid} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+                  <span className={`font-pixel text-[10px] uppercase ${tc.text}`}>
+                    {i + 1}. {tc.name}
+                  </span>
+                <span className="font-retro text-2xl text-white">
                   {wordCounts[tid] ?? 0}
                 </span>
               </div>
@@ -2045,31 +2023,12 @@ function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' 
         }`}>{localTimer}</div>
         <span className="text-[10px] font-pixel text-white/40 uppercase tracking-widest">secondi</span>
       </div>
-
-      {/* Fase eliminazione */}
-      {phase === 'eliminated' && (
-        <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="mb-4 p-4 bg-red-500/10 border-2 border-red-500 text-center"
-        >
-          <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-          <p className="font-retro text-xl text-red-400 uppercase">TEMPO SCADUTO — ELIMINATO!</p>
-          <p className="font-pixel text-[10px] text-white/40 uppercase mt-1">
-            Rimaste: {activePlayers.length} squadre
-          </p>
-        </motion.div>
-      )}
-
+      
       {/* Controlli regia */}
       {role === 'regia' && (
         <div className="flex flex-col gap-2">
-          {phase === 'eliminated' ? (
-            <button onClick={continueAfterElimination} className="retro-btn w-full text-lg py-3 bg-retro-cyan text-black">
-              CONTINUA →
-            </button>
-          ) : !isActive ? (
-            <button onClick={startTurn} className="retro-btn w-full text-2xl py-5 bg-retro-yellow text-black">
+          {!isActive ? (
+            <button onClick={startTurn} className="retro-btn w-full text-2xl py-5 bg-retro-yellow text-black">         
               VIA! ▶
             </button>
           ) : (
@@ -2090,9 +2049,14 @@ function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' 
               </button>
             </div>
           )}
-          <button onClick={resetGame} className="retro-btn py-2 bg-white/5 border border-white/10 text-sm text-white/40">
-            <RotateCcw className="w-3 h-3 inline mr-1" /> RESET
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => emitUpdate({ gameData: { ...sharedStateRef.current, isActive: false, phase: 'winner' } })} className="retro-btn flex-1 py-2 bg-retro-pink text-black text-sm">
+              🏆 FINE GIOCO
+            </button>
+            <button onClick={resetGame} className="retro-btn px-4 py-2 bg-white/5 border border-white/10 text-sm text-white/40">
+              <RotateCcw className="w-3 h-3" />
+            </button>
+          </div>
         </div>
       )}
 
