@@ -339,7 +339,7 @@ export default function App() {
               {mode === 'genio' && <SfidaGenio role={role} sharedState={sharedState} emitUpdate={emitUpdate} emitOptionSelected={emitOptionSelected} selectedTeamId={selectedTeamId} teams={teams} />}
               {mode === 'duellos' && <Duellos role={role} sharedState={sharedState} emitUpdate={emitUpdate} teams={teams} />}
               {mode === 'timeline' && <TimelineGame role={role} sharedState={sharedState} emitUpdate={emitUpdate} />}
-              {mode === 'ring' && <IlRing role={role} sharedState={sharedState} emitUpdate={emitUpdate} />}
+              {mode === 'ring' && <IlRing role={role} sharedState={{...sharedState, allTeams: teams, ringTeams: teams.map((t: any) => t.id)}} emitUpdate={emitUpdate} />}
               {mode === 'chie' && <ChiE role={role} sharedState={sharedState} emitUpdate={emitUpdate} selectedTeamId={selectedTeamId} teams={teams} />}
             </main>
           </motion.div>
@@ -1721,223 +1721,238 @@ function TimelineGame({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubb
 function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' | 'display'; sharedState: any; emitUpdate: (update: any) => void }) {
   const [loading, setLoading] = useState(false);
 
-  // Sync from sharedState
-  const theme = sharedState.theme || '';
-  const categories = sharedState.categories || [];
-  const timer = sharedState.timer ?? 5;
-  const isActive = sharedState.isActive || false;
-  const turn = sharedState.turn || 1;
-  const scores = sharedState.scores || { p1: 0, p2: 0 };
-  const round = sharedState.round || 1;
-  const winner = sharedState.winner || null;
+  // Stato dal server
+  const theme: string = sharedState.theme || '';
+  const phase: 'setup' | 'playing' | 'eliminated' | 'winner' = sharedState.phase || 'setup';
+  const activePlayers: number[] = sharedState.activePlayers || []; // teamId ancora in gioco
+  const currentPlayerIdx: number = sharedState.currentPlayerIdx ?? 0; // indice in activePlayers
+  const eliminated: number[] = sharedState.eliminated || [];
+  const isActive: boolean = sharedState.isActive || false;
 
+  // Timer locale — niente socket tick
+  const [localTimer, setLocalTimer] = useState(5);
+  const localTimerRef = React.useRef(5);
+  const timerRef = React.useRef<any>(null);
+  const sharedStateRef = React.useRef(sharedState);
+  sharedStateRef.current = sharedState;
+
+  // Reset timer quando cambia turno o parte il gioco
+  const prevActivePlayerIdxRef = React.useRef(currentPlayerIdx);
+  const prevIsActiveRef = React.useRef(isActive);
   useEffect(() => {
-    let interval: any;
-    if (isActive && timer > 0 && role === 'regia') {
-      interval = setInterval(() => {
-        emitUpdate({
-          gameData: {
-            ...sharedState,
-            timer: timer - 1
-          }
-        });
+    const turnChanged = prevActivePlayerIdxRef.current !== currentPlayerIdx;
+    const justStarted = !prevIsActiveRef.current && isActive;
+    if (turnChanged || justStarted) {
+      localTimerRef.current = 5;
+      setLocalTimer(5);
+    }
+    prevActivePlayerIdxRef.current = currentPlayerIdx;
+    prevIsActiveRef.current = isActive;
+  }, [currentPlayerIdx, isActive]);
+
+  // Countdown locale
+  useEffect(() => {
+    clearInterval(timerRef.current);
+    if (role === 'regia' && isActive && phase === 'playing') {
+      timerRef.current = setInterval(() => {
+        localTimerRef.current -= 1;
+        setLocalTimer(localTimerRef.current);
+        // Sync ogni 2 secondi
+        if (localTimerRef.current % 2 === 0) {
+          emitUpdate({ gameData: { ...sharedStateRef.current, syncedTimer: localTimerRef.current } });
+        }
+        if (localTimerRef.current <= 0) {
+          clearInterval(timerRef.current);
+          handleTimeOut();
+        }
       }, 1000);
-    } else if (timer === 0 && isActive && role === 'regia') {
-      const roundWinner = turn === 1 ? 2 : 1;
-      const newScores = {
-        ...scores,
-        [roundWinner === 1 ? 'p1' : 'p2']: scores[roundWinner === 1 ? 'p1' : 'p2'] + 1
-      };
-      
+    }
+    return () => clearInterval(timerRef.current);
+  }, [role, isActive, phase, currentPlayerIdx]);
+
+  // Pubblico/display leggono timer sincronizzato
+  useEffect(() => {
+    if (role !== 'regia' && sharedState.syncedTimer != null) {
+      setLocalTimer(sharedState.syncedTimer);
+    }
+  }, [sharedState.syncedTimer]);
+
+  const teams = sharedState.teams || [];
+
+  const handleTimeOut = () => {
+    const latest = sharedStateRef.current;
+    const ap = latest.activePlayers || [];
+    const idx = latest.currentPlayerIdx ?? 0;
+    const eliminatedTeamId = ap[idx];
+    const newEliminated = [...(latest.eliminated || []), eliminatedTeamId];
+    const newActive = ap.filter((id: number) => id !== eliminatedTeamId);
+
+    if (newActive.length <= 1) {
+      // Abbiamo un vincitore
       emitUpdate({
         gameData: {
-          ...sharedState,
+          ...latest,
           isActive: false,
-          scores: newScores,
-          winner: round < 3 ? null : (newScores.p1 > newScores.p2 ? 1 : 2)
+          phase: 'winner',
+          activePlayers: newActive,
+          eliminated: newEliminated,
         }
       });
-    }
-    return () => clearInterval(interval);
-  }, [isActive, timer, turn, scores, round, role, sharedState, emitUpdate]);
-
-  const fetchCategories = async () => {
-    if (role !== 'regia') return;
-    setLoading(true);
-    try {
-      const cats = await geminiService.generateRingCategories();
+    } else {
+      // Prossimo turno — indice rimane uguale (il prossimo giocatore scivola in posizione)
+      const nextIdx = idx >= newActive.length ? 0 : idx;
       emitUpdate({
         gameData: {
-          ...sharedState,
-          categories: cats,
-          theme: '',
-          winner: null,
-          scores: { p1: 0, p2: 0 },
-          round: 1,
-          isActive: false
-        }
-      });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const startWithCategory = async (cat: string) => {
-    if (role !== 'regia') return;
-    setLoading(true);
-    try {
-      const t = await geminiService.generateRingTheme(cat);
-      emitUpdate({
-        gameData: {
-          ...sharedState,
-          theme: t,
-          timer: 5,
+          ...latest,
           isActive: false,
-          turn: 1,
-          categories: []
+          phase: 'eliminated',
+          activePlayers: newActive,
+          eliminated: newEliminated,
+          currentPlayerIdx: nextIdx,
+          syncedTimer: 5,
         }
       });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
     }
   };
 
-  const nextTurn = () => {
-    if (role !== 'regia') return;
-    emitUpdate({
-      gameData: {
-        ...sharedState,
-        turn: turn === 1 ? 2 : 1,
-        timer: 5,
-        isActive: true
-      }
-    });
-  };
-
-  const nextRound = async () => {
+  const startGame = async () => {
     if (role !== 'regia') return;
     setLoading(true);
     try {
       const t = await geminiService.generateRingTheme();
+      const ap = (sharedState.ringTeams || [1, 2, 3]); // tutti i team
       emitUpdate({
         gameData: {
-          ...sharedState,
+          ...sharedStateRef.current,
           theme: t,
-          timer: 5,
+          phase: 'playing',
+          activePlayers: ap,
+          eliminated: [],
+          currentPlayerIdx: 0,
           isActive: false,
-          turn: round % 2 === 0 ? 1 : 2,
-          round: round + 1
+          syncedTimer: 5,
         }
       });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  };
+
+  // Regia preme PASSA — il giocatore corrente ha risposto correttamente
+  const passTurn = () => {
+    if (role !== 'regia') return;
+    clearInterval(timerRef.current);
+    const latest = sharedStateRef.current;
+    const ap = latest.activePlayers || [];
+    const nextIdx = ((latest.currentPlayerIdx ?? 0) + 1) % ap.length;
+    emitUpdate({
+      gameData: {
+        ...latest,
+        currentPlayerIdx: nextIdx,
+        isActive: true,
+        phase: 'playing',
+        syncedTimer: 5,
+      }
+    });
+  };
+
+  // Regia preme VIA — avvia il timer del primo turno
+  const startTurn = () => {
+    if (role !== 'regia') return;
+    emitUpdate({
+      gameData: {
+        ...sharedStateRef.current,
+        isActive: true,
+        phase: 'playing',
+      }
+    });
+  };
+
+  // Dopo eliminazione — riprende il gioco
+  const continueAfterElimination = () => {
+    if (role !== 'regia') return;
+    emitUpdate({
+      gameData: {
+        ...sharedStateRef.current,
+        isActive: true,
+        phase: 'playing',
+      }
+    });
+  };
+
+  const resetGame = () => {
+    if (role !== 'regia') return;
+    emitUpdate({
+      gameData: {
+        ...sharedStateRef.current,
+        theme: '',
+        phase: 'setup',
+        activePlayers: [],
+        eliminated: [],
+        currentPlayerIdx: 0,
+        isActive: false,
+      }
+    });
   };
 
   if (loading) return <LoadingState text="Preparando il Ring..." />;
 
-  if (theme) {
-    const isGameOver = scores.p1 === 2 || scores.p2 === 2 || (round === 3 && timer === 0);
-
+  // ── SETUP ──
+  if (!theme || phase === 'setup') {
     return (
-      <div className="max-w-2xl w-full text-center">
-        <div className="flex justify-between items-center mb-12">
-          <div className="flex gap-3">
-            {[1, 2, 3].map(r => (
-              <div key={r} className={`w-4 h-4 rounded-full border-2 border-black ${round >= r ? 'bg-retro-yellow' : 'bg-white/10'}`} />
-            ))}
-          </div>
-          <span className="text-xs font-pixel text-retro-cyan uppercase tracking-widest">ROUND {round} DI 3</span>
-          <div className="text-retro-yellow font-retro text-2xl">
-            {scores.p1} - {scores.p2}
-          </div>
-        </div>
-
-        <div className="mb-16">
-          <span className="text-xs font-pixel text-retro-cyan uppercase tracking-widest block mb-3">TEMA DEL ROUND</span>
-          <h2 className="text-6xl font-retro uppercase tracking-tighter leading-none retro-title">{theme}</h2>
-        </div>
-
-        <div className="flex items-center justify-between gap-4 md:gap-12 mb-16">
-          <div className={`flex-1 p-6 md:p-10 border transition-all ${turn === 1 ? 'border-retro-cyan bg-retro-cyan/20 scale-105 md:scale-110 shadow-[0_0_30px_rgba(0,255,255,0.2)]' : 'border-white/5 bg-black/40 opacity-50'}`}>
-            <span className="text-[10px] font-pixel uppercase tracking-widest block mb-2 text-retro-yellow">P1</span>
-            <div className="text-xl md:text-3xl font-retro uppercase">SFIDANTE A</div>
-          </div>
-          
-          <div className="flex flex-col items-center min-w-[100px]">
-            <div className={`text-6xl md:text-8xl font-retro ${timer <= 1 ? 'text-red-500 animate-ping' : 'text-white'}`}>
-              {timer}
-            </div>
-            <span className="text-[10px] font-pixel text-retro-cyan uppercase tracking-widest mt-2">SECONDI</span>
-          </div>
-
-          <div className={`flex-1 p-6 md:p-10 border transition-all ${turn === 2 ? 'border-retro-cyan bg-retro-cyan/20 scale-105 md:scale-110 shadow-[0_0_30px_rgba(0,255,255,0.2)]' : 'border-white/5 bg-black/40 opacity-50'}`}>
-            <span className="text-[10px] font-pixel uppercase tracking-widest block mb-2 text-retro-yellow">P2</span>
-            <div className="text-xl md:text-3xl font-retro uppercase">SFIDANTE B</div>
-          </div>
-        </div>
-
-        {timer > 0 ? (
-          role === 'regia' ? (
-            <button 
-              onClick={nextTurn}
-              className="retro-btn w-full text-3xl py-10 bg-white text-black"
-            >
-              {isActive ? 'PASSA IL TURNO' : 'INIZIA ROUND'}
-            </button>
-          ) : (
-            <div className="text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
-              {isActive ? `SQUADRA 0${turn} IN AZIONE!` : 'IN ATTESA DEL VIA...'}
-            </div>
-          )
+      <div className="max-w-md w-full text-center">
+        <Swords className="w-16 h-16 text-retro-cyan mx-auto mb-6" />
+        <h2 className="text-5xl font-retro retro-title uppercase mb-4">IL RING</h2>
+        <p className="text-retro-cyan font-mono text-sm mb-10 uppercase leading-tight tracking-widest">
+          TUTTI CONTRO TUTTI. 5 SECONDI PER DIRE UN NOME. CHI FINISCE IL TEMPO È ELIMINATO!
+        </p>
+        {role === 'regia' ? (
+          <button onClick={startGame} className="retro-btn w-full text-lg py-3 bg-retro-cyan flex items-center justify-center gap-3">
+            <Play className="w-5 h-5" /> ENTRA NEL RING
+          </button>
         ) : (
-          <div className="space-y-8">
-            <div className="bg-retro-pink/10 border border-retro-pink p-10 shadow-[0_0_40px_rgba(255,0,255,0.1)] backdrop-blur-md">
-              <AlertCircle className="w-16 h-16 text-retro-pink mx-auto mb-6" />
-              <h3 className="text-4xl font-retro uppercase retro-title">K.O. TECNICO</h3>
-              <p className="text-white font-pixel text-sm mt-4 uppercase">IL GIOCATORE {turn} HA ESAURITO IL TEMPO!</p>
-            </div>
-
-            {scores.p1 < 2 && scores.p2 < 2 && round < 3 ? (
-              role === 'regia' && (
-                <button 
-                  onClick={nextRound}
-                  className="retro-btn w-full text-2xl py-8 bg-retro-cyan"
-                >
-                  PROSSIMO ROUND <Play className="w-6 h-6 ml-4" />
-                </button>
-              )
-            ) : (
-              <div className="bg-green-500/10 border border-green-500 p-10 shadow-[0_0_40px_rgba(34,197,94,0.1)] backdrop-blur-md">
-                <Trophy className="w-16 h-16 text-green-500 mx-auto mb-6" />
-                <h3 className="text-4xl font-retro uppercase text-green-500">VINCITORE</h3>
-                <p className="text-white mt-4 text-3xl font-retro uppercase">GIOCATORE {scores.p1 > scores.p2 ? '1' : '2'}</p>
-                {role === 'regia' && (
-                  <button 
-                    onClick={fetchCategories}
-                    className="mt-10 text-green-500 hover:text-white transition-colors uppercase text-xs font-pixel tracking-widest"
-                  >
-                    TORNA ALLA SELEZIONE
-                  </button>
-                )}
-              </div>
-            )}
+          <div className="text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
+            In attesa che la regia inizi...
           </div>
         )}
+      </div>
+    );
+  }
 
-        {role === 'regia' && !isGameOver && (
-          <div className="mt-12">
-            <button 
-              onClick={fetchCategories}
-              className="text-retro-cyan hover:text-retro-pink transition-colors flex items-center gap-2 mx-auto uppercase text-xs font-pixel tracking-widest"
-            >
-              <RotateCcw className="w-4 h-4" /> RESET MATCH
+  // Helper: colore squadra
+  const teamColor = (teamId: number) => {
+    const t = (sharedState.allTeams || []).find((t: any) => t.id === teamId);
+    if (!t) return { border: 'border-white', text: 'text-white', bg: 'bg-white/10' };
+    return {
+      border: t.color === 'bg-retro-pink' ? 'border-retro-pink' : t.color === 'bg-retro-cyan' ? 'border-retro-cyan' : 'border-retro-yellow',
+      text: t.color === 'bg-retro-pink' ? 'text-retro-pink' : t.color === 'bg-retro-cyan' ? 'text-retro-cyan' : 'text-retro-yellow',
+      bg: t.color === 'bg-retro-pink' ? 'bg-retro-pink/20' : t.color === 'bg-retro-cyan' ? 'bg-retro-cyan/20' : 'bg-retro-yellow/20',
+      name: t.name,
+    };
+  };
+
+  const currentTeamId = activePlayers[currentPlayerIdx];
+  const currentTeam = teamColor(currentTeamId);
+
+  // ── VINCITORE ──
+  if (phase === 'winner') {
+    const winnerTeam = activePlayers[0] != null ? teamColor(activePlayers[0]) : null;
+    return (
+      <div className="max-w-md w-full text-center">
+        <Trophy className="w-20 h-20 text-retro-yellow mx-auto mb-6 animate-bounce" />
+        <h2 className="text-5xl font-retro retro-title uppercase mb-4">VINCITORE!</h2>
+        {winnerTeam && (
+          <div className={`text-4xl font-retro uppercase mt-4 mb-8 ${winnerTeam.text}`}>{winnerTeam.name}</div>
+        )}
+        <div className="mb-8 text-sm font-pixel text-white/40 uppercase">
+          Eliminati: {eliminated.map(id => teamColor(id).name).join(', ')}
+        </div>
+        {role === 'regia' && (
+          <div className="flex gap-3">
+            <button onClick={startGame} className="retro-btn flex-1 text-base py-3 bg-retro-cyan">
+              NUOVA CATEGORIA
+            </button>
+            <button onClick={resetGame} className="retro-btn px-4 py-3 bg-white/10 border border-white/20 text-sm">
+              RESET
             </button>
           </div>
         )}
@@ -1945,23 +1960,97 @@ function IlRing({ role, sharedState, emitUpdate }: { role: 'regia' | 'pubblico' 
     );
   }
 
+  // ── GIOCO ──
   return (
-    <div className="max-w-md w-full text-center">
-      <Swords className="w-20 h-20 text-retro-cyan mx-auto mb-8" />
-      <h2 className="text-6xl font-retro retro-title uppercase mb-4">IL RING</h2>
-      <p className="text-retro-cyan font-mono text-lg mb-12 uppercase leading-tight tracking-widest">
-        SCONTRO 1 VS 1 AL MEGLIO DEI 3 ROUND. VELOCITÀ, MEMORIA E CATTIVERIA AGONISTICA.
-      </p>
-      {role === 'regia' ? (
-        <button 
-          onClick={fetchCategories}
-          className="retro-btn w-full text-base py-3 bg-retro-cyan flex items-center justify-center gap-4"
+    <div className="max-w-2xl w-full">
+      {/* Header tema */}
+      <div className="text-center mb-6">
+        <span className="text-[10px] font-pixel text-retro-cyan uppercase tracking-widest block mb-1">CATEGORIA</span>
+        <h2 className="text-3xl md:text-5xl font-retro uppercase tracking-tighter retro-title">{theme}</h2>
+      </div>
+
+      {/* Squadre attive */}
+      <div className="flex gap-2 justify-center mb-6">
+        {activePlayers.map((tid: number, idx: number) => {
+          const tc = teamColor(tid);
+          const isCurrent = idx === currentPlayerIdx;
+          return (
+            <div key={tid} className={`flex-1 p-3 border-2 text-center transition-all ${
+              isCurrent
+                ? `${tc.border} ${tc.bg} scale-105 shadow-[0_0_20px_rgba(255,255,255,0.1)]`
+                : 'border-white/10 bg-black/20 opacity-40'
+            }`}>
+              <span className={`text-[9px] font-pixel uppercase tracking-widest block ${isCurrent ? tc.text : 'text-white/40'}`}>
+                {isCurrent ? '▶ IN GIOCO' : 'ATTENDE'}
+              </span>
+              <span className={`font-retro text-lg uppercase ${isCurrent ? tc.text : 'text-white/40'}`}>{tc.name}</span>
+            </div>
+          );
+        })}
+        {eliminated.map((tid: number) => {
+          const tc = teamColor(tid);
+          return (
+            <div key={tid} className="flex-1 p-3 border-2 border-red-500/20 bg-black/20 opacity-30 text-center">
+              <span className="text-[9px] font-pixel text-red-400/50 uppercase tracking-widest block">ELIMINATO</span>
+              <span className="font-retro text-lg uppercase text-white/20 line-through">{tc.name}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Timer */}
+      <div className="text-center mb-6">
+        <div className={`text-8xl font-retro tabular-nums ${
+          localTimer <= 2 ? 'text-red-500 animate-pulse' :
+          localTimer <= 3 ? 'text-retro-yellow' : 'text-white'
+        }`}>{localTimer}</div>
+        <span className="text-[10px] font-pixel text-white/40 uppercase tracking-widest">secondi</span>
+      </div>
+
+      {/* Fase eliminazione */}
+      {phase === 'eliminated' && (
+        <motion.div
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="mb-6 p-4 bg-red-500/10 border-2 border-red-500 text-center"
         >
-          <Play className="w-5 h-5" /> ENTRA NEL RING
-        </button>
-      ) : (
-        <div className="text-center p-4 border-2 border-dashed border-retro-yellow text-retro-yellow font-pixel text-[10px] uppercase">
-          In attesa che la regia inizi la sfida...
+          <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+          <p className="font-retro text-xl text-red-400 uppercase">TEMPO SCADUTO — ELIMINATO!</p>
+          <p className="font-pixel text-[10px] text-white/40 uppercase mt-1">
+            Rimaste: {activePlayers.length} squadre
+          </p>
+        </motion.div>
+      )}
+
+      {/* Controlli */}
+      {role === 'regia' && (
+        <div className="flex flex-col gap-3">
+          {phase === 'eliminated' ? (
+            <button onClick={continueAfterElimination} className="retro-btn w-full text-lg py-3 bg-retro-cyan text-black">
+              CONTINUA →
+            </button>
+          ) : !isActive ? (
+            <button onClick={startTurn} className="retro-btn w-full text-2xl py-6 bg-retro-yellow text-black">
+              VIA! ▶
+            </button>
+          ) : (
+            <button onClick={passTurn} className="retro-btn w-full text-2xl py-6 bg-green-500 text-black">
+              ✓ PASSA TURNO
+            </button>
+          )}
+          <button onClick={resetGame} className="retro-btn py-2 bg-white/5 border border-white/10 text-sm text-white/40">
+            <RotateCcw className="w-3 h-3 inline mr-1" /> RESET
+          </button>
+        </div>
+      )}
+
+      {role !== 'regia' && (
+        <div className={`text-center p-4 border-2 border-dashed font-pixel text-[10px] uppercase ${
+          isActive && currentTeamId === (sharedState.myTeamId)
+            ? 'border-green-500 text-green-400 animate-pulse'
+            : 'border-white/20 text-white/40'
+        }`}>
+          {isActive ? `${currentTeam.name} IN AZIONE!` : phase === 'eliminated' ? 'ELIMINAZIONE!' : 'In attesa del via...'}
         </div>
       )}
     </div>
