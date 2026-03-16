@@ -776,7 +776,7 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
   // ── TIMER: COMPLETAMENTE LOCALE — nessun tick via socket ──
   // Il timer è solo UI. Viene resettato a 120 quando arriva phase='playing' dal server.
   // Quando scade, la regia invia la fine del round via socket (un singolo evento discreto).
-  const [localTimer, setLocalTimer] = useState(120);
+  const [localTimer, setLocalTimer] = useState(60);
   
     // Pubblico e Display leggono il timer sincronizzato dalla regia via socket
     useEffect(() => {
@@ -785,7 +785,7 @@ function Duellos({ role, sharedState, emitUpdate, teams }: { role: 'regia' | 'pu
       }
     }, [sharedState.syncedTimer]);
   const timerRef = React.useRef<any>(null);
-  const localTimerRef = React.useRef(120);
+  const localTimerRef = React.useRef(60);
   const wordRevealedRef = React.useRef(false);
   wordRevealedRef.current = wordRevealed;
 
@@ -1104,15 +1104,27 @@ if (localTimerRef.current <= 0) {
       <div className="max-w-2xl w-full">
         <div className="text-center mb-10">
           <span className="text-xs font-pixel text-retro-pink uppercase tracking-[0.3em] block mb-2">DUELLOS</span>
-          <h2 className="text-5xl font-retro retro-title uppercase mb-2">È il tuo turno!</h2>
+          <h2 className="text-3xl font-retro retro-title uppercase mb-6">È il tuo turno!</h2>
           {nextTeam && (
-            <div className={`inline-block mt-4 px-8 py-3 border-4 text-3xl font-retro uppercase ${
-              nextTeam.color === 'bg-retro-pink' ? 'border-retro-pink text-retro-pink shadow-[0_0_30px_rgba(255,0,255,0.4)]' :
-              nextTeam.color === 'bg-retro-cyan' ? 'border-retro-cyan text-retro-cyan shadow-[0_0_30px_rgba(0,255,255,0.4)]' :
-              'border-retro-yellow text-retro-yellow shadow-[0_0_30px_rgba(255,255,0,0.4)]'
-            }`}>
-              {nextTeam.name}
-            </div>
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: 'spring', bounce: 0.5 }}
+              className={`inline-block mt-2 px-12 py-6 border-4 relative ${
+                nextTeam.color === 'bg-retro-pink' ? 'border-retro-pink bg-retro-pink/10 shadow-[0_0_60px_rgba(255,0,255,0.5)]' :
+                nextTeam.color === 'bg-retro-cyan' ? 'border-retro-cyan bg-retro-cyan/10 shadow-[0_0_60px_rgba(0,255,255,0.5)]' :
+                'border-retro-yellow bg-retro-yellow/10 shadow-[0_0_60px_rgba(255,255,0,0.5)]'
+              }`}
+            >
+              <span className={`text-[10px] font-pixel uppercase tracking-[0.4em] block mb-2 ${
+                nextTeam.color === 'bg-retro-pink' ? 'text-retro-pink/70' :
+                nextTeam.color === 'bg-retro-cyan' ? 'text-retro-cyan/70' : 'text-retro-yellow/70'
+              }`}>GIOCA ORA</span>
+              <span className={`text-5xl font-retro uppercase tracking-tight ${
+                nextTeam.color === 'bg-retro-pink' ? 'text-retro-pink' :
+                nextTeam.color === 'bg-retro-cyan' ? 'text-retro-cyan' : 'text-retro-yellow'
+              }`}>{nextTeam.name}</span>
+            </motion.div>
           )}
           <p className="mt-4 text-white/50 font-pixel text-[10px] uppercase tracking-widest">
             Squadre già giocate: {alreadyPlayed.length} / {teamsQueue.length}
@@ -1400,6 +1412,24 @@ if (localTimerRef.current <= 0) {
 
         {role === 'regia' && (
           <div className="flex gap-4">
+            <motion.button
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.97 }}
+              onClick={() => {
+                // Assegna punti: 3 al primo, 2 al secondo, 1 al terzo
+                const points = [3, 2, 1];
+                const newTeams = teams ? [...teams] : [];
+                sorted.forEach((r, i) => {
+                  const pts = points[i] ?? 0;
+                  const idx = newTeams.findIndex(t => t.id === r.teamId);
+                  if (idx !== -1) newTeams[idx] = { ...newTeams[idx], score: newTeams[idx].score + pts };
+                });
+                emitUpdate({ teams: newTeams });
+              }}
+              className="retro-btn flex-1 py-3 text-base bg-retro-yellow text-black"
+            >
+              <Trophy className="w-5 h-5 inline mr-2" /> ASSEGNA PUNTI
+            </motion.button>
             <motion.button
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
