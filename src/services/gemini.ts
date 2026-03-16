@@ -189,9 +189,13 @@ export const geminiService = {
 
   async generateChiEPersonaggi(): Promise<{ name: string; hint: string }[]> {
     const system = "Sei un esperto di cultura generale. Rispondi esclusivamente in formato JSON valido.";
-    const prompt = `Genera una lista di 10 personaggi famosi molto diversi tra loro: mix di sportivi, attori, cantanti, politici storici, scienziati, personaggi TV. 
-    Devono essere personaggi reali e molto conosciuti a livello internazionale o italiano, con una pagina Wikipedia che abbia sicuramente una foto.
-    Per ognuno fornisci anche un piccolo indizio (categoria o periodo, NON il nome).
+    const prompt = `Genera una lista di 5 personaggi famosi con difficoltà VARIABILE:
+    - 2 famosissimi a livello mondiale (es. Papa Francesco, Ronaldo, Madonna)
+    - 2 mediamente noti, famosi in Italia o in un settore specifico (es. un politico italiano, un atleta olimpico)
+    - 1 meno noto, di nicchia ma verificabile (es. uno scienziato, un artista, uno sportivo di sport minore)
+    Mix obbligatorio di categorie: sport, musica, cinema/TV, politica/storia, scienza/cultura.
+    Devono essere personaggi reali con pagina Wikipedia che abbia sicuramente una foto.
+    Per ognuno un indizio breve (categoria e periodo, MAI il nome).
     Rispondi in italiano in formato JSON: [{"name": "Nome Cognome", "hint": "Calciatore italiano anni 90"}].`;
 
     try {
